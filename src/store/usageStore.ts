@@ -69,7 +69,10 @@ export const useStore = create<Store>((set, get) => ({
         errorKind: data.error_kind ?? null,
       });
     } catch (e) {
-      set({ error: String(e) });
+      set({
+        error: e instanceof Error ? e.message : String(e),
+        errorKind: 'NETWORK_ERROR',
+      });
     }
   },
 
@@ -84,7 +87,10 @@ export const useStore = create<Store>((set, get) => ({
         errorKind: data.error_kind ?? null,
       });
     } catch (e) {
-      set({ error: String(e) });
+      set({
+        error: e instanceof Error ? e.message : String(e),
+        errorKind: 'NETWORK_ERROR',
+      });
     } finally {
       set({ isRefreshing: false });
     }

@@ -45,6 +45,8 @@
 /* ─── Root ────────────────────────────────────────────────────────────────── */
 html, body, #root {
   height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -59,28 +61,32 @@ body {
 
 /* ─── Popover shell ──────────────────────────────────────────────────────── */
 .popover {
-  width: 380px;
+  width: 100vw;
+  height: 100vh;
   background: var(--bg1);
-  border-radius: var(--r-lg);
-  border: 0.5px solid var(--sep);
+  border-radius: 0;
+  border: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */
 .header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
   border-bottom: 0.5px solid var(--sep);
 }
-.header-left  { display: flex; align-items: center; gap: 8px; }
+.header-left  { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .header-drag-region {
   flex: 1;
   min-width: 0;
   cursor: move;
 }
-.header-right { display: flex; gap: 4px; }
+.header-right { display: flex; gap: 4px; flex-shrink: 0; }
 
 .status-dot {
   width: 7px; height: 7px;
@@ -91,8 +97,16 @@ body {
 }
 .status-dot--warn { background: var(--orange); }
 
-.header-title { font-size: 14px; font-weight: 500; color: var(--t1); }
-.header-time  { font-size: 11px; color: var(--t3); }
+.header-title {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--t1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header-time  { flex-shrink: 0; font-size: 11px; color: var(--t3); }
 
 .icon-btn {
   width: 28px; height: 28px;
@@ -109,10 +123,14 @@ body {
 
 /* ─── Popover body ───────────────────────────────────────────────────────── */
 .popover-body {
+  flex: 1;
+  min-height: 0;
   padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ─── Setup / error banner ───────────────────────────────────────────────── */
@@ -152,6 +170,7 @@ body {
   border-radius: var(--r-md);
   border: 0.5px solid var(--sep);
   padding: 12px;
+  min-width: 0;
 }
 .card-label {
   font-size: 10px;
@@ -165,13 +184,15 @@ body {
 /* ─── Metrics row ────────────────────────────────────────────────────────── */
 .metrics-row {
   display: grid;
-  grid-template-columns: 104px 1fr;
+  grid-template-columns: minmax(128px, 0.72fr) minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 .right-col {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 /* ─── Ring card ──────────────────────────────────────────────────────────── */
@@ -179,7 +200,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   padding: 10px 8px;
+  min-height: 194px;
 }
 .ring-pct {
   font-size: 17px;
@@ -195,6 +218,7 @@ body {
   color: var(--t2);
   margin-top: 4px;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 .ring-stats {
   font-size: 10px;
@@ -204,7 +228,7 @@ body {
 }
 
 /* ─── Weekly card ────────────────────────────────────────────────────────── */
-.weekly-card  {}
+.weekly-card  { min-height: 94px; }
 .weekly-header {
   display: flex;
   align-items: center;
@@ -217,12 +241,14 @@ body {
 }
 
 /* ─── Spend card ─────────────────────────────────────────────────────────── */
-.spend-card {}
+.spend-card { min-height: 110px; }
 .spend-amount {
   font-size: 20px;
   font-weight: 500;
   color: var(--t1);
   margin: 2px 0 2px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 .spend-period {
   font-size: 11px;
@@ -232,9 +258,17 @@ body {
 
 /* ─── Shared stat rows ───────────────────────────────────────────────────── */
 .stat-list  { display: flex; flex-direction: column; gap: 3px; }
-.stat-row   { display: flex; justify-content: space-between; }
+.stat-row   { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
 .stat-label { font-size: 11px; color: var(--t3); }
-.stat-value { font-size: 11px; color: var(--t1); }
+.stat-value {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--t1);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ─── Progress bar ───────────────────────────────────────────────────────── */
 .progress-bg {
@@ -269,6 +303,7 @@ body {
 .reset-subtitle {
   font-size: 11px;
   color: var(--t3);
+  overflow-wrap: anywhere;
 }
 .reset-last {
   font-size: 10px;
@@ -380,6 +415,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 8px;
   margin-bottom: 3px;
 }
 .model-name  {
@@ -395,6 +431,10 @@ body {
   font-size: 11px;
   color: var(--t2);
   flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-state {
@@ -647,6 +687,10 @@ body {
   height: 20px;
   flex-shrink: 0;
   cursor: pointer;
+}
+.toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .toggle input {
   opacity: 0;

@@ -23,7 +23,9 @@ import {
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
 const WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
-const WHAM_RESET_URL = 'https://chatgpt.com/backend-api/wham/reset';
+const CODEX_RESET_CREDIT_URL = 'https://chatgpt.com/backend-api/api/codex/rate-limit-reset-credits/consume';
+const WHAM_RESET_CREDIT_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume';
+const AUTOSTART_ID = 'codex-ui.desktop';
 
 const DEFAULT_SETTINGS: Settings = {
   chatgpt_cookie: undefined,
@@ -51,6 +53,10 @@ let quotaAlertActive = false;
 let refreshTimer: number | null = null;
 const listeners = new Set<(snapshot: UsageSnapshot) => void>();
 
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
 function nativeApi(): NeutralinoApi | null {
   return window.Neutralino ?? (typeof Neutralino !== 'undefined' ? Neutralino : null);
 }
@@ -66,10 +72,11 @@ export function initNeutralinoBackend() {
   }
 
   api.events.on('trayMenuItemClicked', (event) => {
-    if (event.detail?.id === 'quit') {
+    const detail = record(event.detail);
+    if (detail.id === 'quit') {
       void quitApp();
     }
-    if (event.detail?.id === 'refresh') {
+    if (detail.id === 'refresh') {
       void refreshUsage();
     }
   });
@@ -112,12 +119,7 @@ export async function executeReset(): Promise<boolean> {
 
   let ok = false;
   if (auth) {
-    try {
-      const result = await curlJson(WHAM_RESET_URL, auth, 'POST');
-      ok = result.ok;
-    } catch {
-      ok = false;
-    }
+    ok = await consumeResetCredit(auth);
   }
 
   if (!ok) {
@@ -212,15 +214,74 @@ export async function saveSettings(settings: Settings): Promise<void> {
   };
 
   const api = nativeApi();
+
   if (api) {
-    if (normalized.autostart) {
-      throw new Error('Neutralino 版暂未自动写入开机自启，请使用系统“启动应用”添加发布版程序。');
-    }
+    await applyAutostart(normalized.autostart);
     await api.storage.setData(SETTINGS_KEY, JSON.stringify(normalized));
   }
 
   cached = null;
   await scheduleRefresh();
+}
+
+async function applyAutostart(enabled: boolean): Promise<void> {
+  const api = nativeApi();
+  if (!api) return;
+  if (typeof NL_OS !== 'undefined' && NL_OS !== 'Linux') {
+    throw new Error('开机自启当前仅支持 Linux。');
+  }
+
+  const home = await api.os.getPath('home');
+  const autostartDir = `${home}/.config/autostart`;
+  const desktopPath = `${autostartDir}/${AUTOSTART_ID}`;
+
+  if (!enabled) {
+    try {
+      await api.filesystem.removeFile(desktopPath);
+    } catch {
+      // Missing autostart entries are already disabled.
+    }
+    return;
+  }
+
+  const executable = await currentExecutablePath();
+  if (!executable.includes('/neutralino-dist/')) {
+    throw new Error('请先运行 ./run.sh --build，并在发布版中开启开机自启。');
+  }
+
+  try {
+    await api.filesystem.createDirectory(`${home}/.config`);
+  } catch {
+    // Directory already exists or cannot be created; the next write reports real failures.
+  }
+  try {
+    await api.filesystem.createDirectory(autostartDir);
+  } catch {
+    // Directory already exists or cannot be created; the next write reports real failures.
+  }
+
+  await api.filesystem.writeFile(desktopPath, [
+    '[Desktop Entry]',
+    'Type=Application',
+    'Name=codex-ui',
+    'Comment=Codex usage dashboard',
+    `Exec=${desktopExecQuote(executable)}`,
+    'Terminal=false',
+    'X-GNOME-Autostart-enabled=true',
+    '',
+  ].join('\n'));
+}
+
+async function currentExecutablePath(): Promise<string> {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino API unavailable');
+
+  const out = await api.os.execCommand('readlink -f /proc/$PPID/exe');
+  const executable = out.stdOut.trim();
+  if (out.exitCode !== 0 || !executable) {
+    throw new Error(out.stdErr || '无法定位当前程序路径');
+  }
+  return executable;
 }
 
 export async function hideWindow(): Promise<void> {
@@ -423,7 +484,35 @@ async function fetchWhamUsage(auth: Auth): Promise<Pick<UsageSnapshot, 'window_5
   return parseWhamResponse(wham.json);
 }
 
-async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST'): Promise<{ ok: boolean; status: number; json: any }> {
+async function consumeResetCredit(auth: Auth): Promise<boolean> {
+  const idempotencyKey = createIdempotencyKey();
+  const urls = auth.kind === 'bearer'
+    ? [CODEX_RESET_CREDIT_URL, WHAM_RESET_CREDIT_URL]
+    : [WHAM_RESET_CREDIT_URL];
+  const bodies = [
+    { idempotencyKey },
+    { idempotency_key: idempotencyKey },
+  ];
+
+  for (const url of urls) {
+    for (const body of bodies) {
+      try {
+        const result = await curlJson(url, auth, 'POST', body);
+        if (!result.ok) continue;
+        const outcome = String(record(result.json).outcome ?? '');
+        if (outcome === 'reset' || outcome === 'alreadyRedeemed') return true;
+        if (outcome === 'noCredit' || outcome === 'nothingToReset') return false;
+        return false;
+      } catch {
+        // Try the next supported endpoint/body shape.
+      }
+    }
+  }
+
+  return false;
+}
+
+async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', requestBody?: unknown): Promise<{ ok: boolean; status: number; json: unknown }> {
   const api = nativeApi();
   if (!api) {
     throw new Error('Neutralino API unavailable');
@@ -431,31 +520,32 @@ async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST'): Promis
 
   const headers = auth.kind === 'bearer'
     ? [
-        `-H ${shellQuote(`Authorization: Bearer ${auth.accessToken}`)}`,
-        '-H "OAI-Product-Sku: codex"',
-        auth.accountId ? `-H ${shellQuote(`ChatGPT-Account-Id: ${auth.accountId}`)}` : '',
+        `header = ${curlConfigQuote(`Authorization: Bearer ${auth.accessToken}`)}`,
+        `header = ${curlConfigQuote('OAI-Product-Sku: codex')}`,
+        auth.accountId ? `header = ${curlConfigQuote(`ChatGPT-Account-Id: ${auth.accountId}`)}` : '',
       ]
-    : [`-H ${shellQuote(`Cookie: ${auth.cookie}`)}`];
-
-  const command = [
-    'curl',
-    '-sS',
-    '-L',
-    '-m 12',
-    '-w "\\n%{http_code}"',
-    method === 'POST' ? '-X POST' : '',
-    '-H "accept: application/json"',
-    '-H "referer: https://chatgpt.com/"',
-    '-H "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"',
+    : [`header = ${curlConfigQuote(`Cookie: ${auth.cookie}`)}`];
+  const config = [
+    `url = ${curlConfigQuote(url)}`,
+    method === 'POST' ? 'request = "POST"' : '',
+    'location',
+    'silent',
+    'show-error',
+    'max-time = 12',
+    'write-out = "\\n%{http_code}"',
+    'header = "accept: application/json"',
+    'header = "referer: https://chatgpt.com/"',
+    'header = "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"',
+    requestBody ? 'header = "content-type: application/json"' : '',
+    requestBody ? `data = ${curlConfigQuote(JSON.stringify(requestBody))}` : '',
     ...headers,
-    shellQuote(url),
-  ].filter(Boolean).join(' ');
+  ].filter(Boolean).join('\n');
 
-  const out = await api.os.execCommand(command);
-  const body = out.stdOut.trimEnd();
-  const splitAt = body.lastIndexOf('\n');
-  const payload = splitAt >= 0 ? body.slice(0, splitAt) : body;
-  const status = splitAt >= 0 ? Number(body.slice(splitAt + 1)) : out.exitCode === 0 ? 200 : 0;
+  const out = await api.os.execCommand('curl -K -', { stdIn: config });
+  const responseText = out.stdOut.trimEnd();
+  const splitAt = responseText.lastIndexOf('\n');
+  const payload = splitAt >= 0 ? responseText.slice(0, splitAt) : responseText;
+  const status = splitAt >= 0 ? Number(responseText.slice(splitAt + 1)) : out.exitCode === 0 ? 200 : 0;
 
   if (status === 401 || status === 403) {
     throw new Error(`鉴权失败（${status}）`);
@@ -504,26 +594,13 @@ async function parseLatestRateLimits(): Promise<{ primary: WindowUsage; secondar
 
   try {
     const home = await api.os.getPath('home');
-    const root = `${home}/.codex/sessions`;
-    const entries = await api.filesystem.readDirectory(root, { recursive: true });
     let latest: { timestamp: number; primary: WindowUsage; secondary: WindowUsage } | null = null;
 
-    for (const entry of entries) {
-      if (entry.type !== 'FILE' || !entry.entry.endsWith('.jsonl') || !entry.entry.includes('rollout-')) continue;
-      const path = `${root}/${entry.entry}`;
-      const content = await api.filesystem.readFile(path);
-      for (const line of content.split('\n')) {
-        const parsed = parseJson(line);
-        const payload = parsed?.payload;
-        if (payload?.type !== 'token_count' || !payload?.rate_limits) continue;
-        const primary = parseLocalLimitWindow(payload.rate_limits.primary);
-        const secondary = parseLocalLimitWindow(payload.rate_limits.secondary);
-        if (!primary || !secondary) continue;
-        const ts = Date.parse(parsed.timestamp ?? payload.timestamp ?? '') || Date.now();
-        if (!latest || ts > latest.timestamp) {
-          latest = { timestamp: ts, primary, secondary };
-        }
+    for (const day of recentDays(14)) {
+      for (const path of await rolloutFilesForDay(day, home)) {
+        latest = await latestRateLimitsInFile(path, latest);
       }
+      if (latest) break;
     }
 
     return latest ? { primary: latest.primary, secondary: latest.secondary } : null;
@@ -532,11 +609,41 @@ async function parseLatestRateLimits(): Promise<{ primary: WindowUsage; secondar
   }
 }
 
-async function rolloutFilesForDay(day: Date): Promise<string[]> {
+async function latestRateLimitsInFile(
+  path: string,
+  latest: { timestamp: number; primary: WindowUsage; secondary: WindowUsage } | null,
+) {
+  const api = nativeApi();
+  if (!api) return latest;
+
+  try {
+    const content = await api.filesystem.readFile(path);
+    for (const line of content.split('\n')) {
+      const parsed = parseJson(line);
+      const parsedRecord = record(parsed);
+      const payload = record(parsedRecord.payload);
+      const rateLimits = record(payload.rate_limits);
+      if (payload.type !== 'token_count' || !payload.rate_limits) continue;
+      const primary = parseLocalLimitWindow(rateLimits.primary);
+      const secondary = parseLocalLimitWindow(rateLimits.secondary);
+      if (!primary || !secondary) continue;
+      const ts = Date.parse(String(parsedRecord.timestamp ?? payload.timestamp ?? '')) || Date.now();
+      if (!latest || ts > latest.timestamp) {
+        latest = { timestamp: ts, primary, secondary };
+      }
+    }
+  } catch {
+    return latest;
+  }
+
+  return latest;
+}
+
+async function rolloutFilesForDay(day: Date, homeOverride?: string): Promise<string[]> {
   const api = nativeApi();
   if (!api) return [];
   try {
-    const home = await api.os.getPath('home');
+    const home = homeOverride ?? await api.os.getPath('home');
     const y = String(day.getFullYear()).padStart(4, '0');
     const m = String(day.getMonth() + 1).padStart(2, '0');
     const d = String(day.getDate()).padStart(2, '0');
@@ -547,6 +654,14 @@ async function rolloutFilesForDay(day: Date): Promise<string[]> {
       .map((entry) => `${dir}/${entry.entry}`);
   } catch {
     return [];
+  }
+}
+
+function* recentDays(count: number): Generator<Date> {
+  const day = new Date();
+  for (let i = 0; i < count; i += 1) {
+    yield new Date(day);
+    day.setDate(day.getDate() - 1);
   }
 }
 
@@ -586,6 +701,18 @@ function* daysBetween(from: Date, to: Date): Generator<Date> {
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+function curlConfigQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
+}
+
+function createIdempotencyKey(): string {
+  try {
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function desktopExecQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`;
 }

@@ -81,7 +81,7 @@ describe('local rate-limit fallback parsing', () => {
 });
 
 describe('remote usage response parsing', () => {
-  it('parses Codex usage rateLimits array and credits', () => {
+  it('parses Codex usage rateLimits array without inferring reset credits', () => {
     const resetAt = Math.floor(Date.now() / 1000) + 60;
     const parsed = parseCodexUsage({
       rateLimits: [{
@@ -94,7 +94,7 @@ describe('remote usage response parsing', () => {
 
     expect(parsed?.window_5h.percent).toBe(61);
     expect(parsed?.window_weekly.percent).toBe(9);
-    expect(parsed?.banked_resets.available).toBe(1);
+    expect(parsed?.banked_resets.available).toBeNull();
   });
 
   it('parses Codex usage map shape and snake_case fields', () => {
@@ -112,7 +112,23 @@ describe('remote usage response parsing', () => {
 
     expect(parsed?.window_5h.percent).toBe(25);
     expect(parsed?.window_weekly.percent).toBe(2);
-    expect(parsed?.banked_resets.available).toBe(0);
+    expect(parsed?.banked_resets.available).toBeNull();
+  });
+
+  it('parses Codex app-server reset credit summary', () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 60;
+    const parsed = parseCodexUsage({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 28, resetsAt: resetAt },
+        secondary: { usedPercent: 5, resetsAt: resetAt + 3600 },
+        credits: { hasCredits: true, unlimited: false, balance: 99 },
+      },
+      rateLimitResetCredits: { availableCount: 3 },
+    });
+
+    expect(parsed?.window_5h.percent).toBe(28);
+    expect(parsed?.banked_resets.available).toBe(3);
   });
 
   it('parses legacy wham grants and flat usage shapes', () => {
@@ -129,13 +145,15 @@ describe('remote usage response parsing', () => {
         pro_5h: { used: 12, limit: 100, reset_at: resetAt },
         pro_weekly: { used: 99, limit: 1000, reset_at: resetAt },
       },
+      rate_limit_reset_credits: { available_count: '4' },
     });
 
     expect(grants.window_5h.percent).toBe(30);
     expect(grants.window_weekly.percent).toBe(40);
-    expect(grants.banked_resets.available).toBe(2);
+    expect(grants.banked_resets.available).toBeNull();
     expect(flat.window_5h.percent).toBe(12);
     expect(flat.window_weekly.percent).toBe(9.9);
+    expect(flat.banked_resets.available).toBe(4);
   });
 });
 

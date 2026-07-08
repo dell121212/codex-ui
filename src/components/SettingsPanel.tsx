@@ -16,10 +16,10 @@ const INTERVALS = [
 
 type TestState = 'idle' | 'testing' | 'ok' | 'fail';
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <label className="toggle" aria-label="开关">
-      <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} />
+      <input type="checkbox" checked={value} disabled={disabled} onChange={e => onChange(e.target.checked)} />
       <span className="toggle-track" />
       <span className="toggle-thumb" />
     </label>
@@ -198,7 +198,7 @@ export default function SettingsPanel({ onClose }: Props) {
           <div className="settings-row">
             <div>
               <div className="settings-row-label">开机自启</div>
-              <div className="settings-row-sub">登录后静默启动并驻留系统托盘</div>
+              <div className="settings-row-sub">发布版可随登录自动启动</div>
             </div>
             <Toggle
               value={cfg.autostart}
@@ -219,7 +219,7 @@ export default function SettingsPanel({ onClose }: Props) {
 
         {/* Version */}
         <div style={{ fontSize: 11, color: 'var(--t4)', textAlign: 'center', padding: '4px 0' }}>
-          codex-bar-lite v0.1.0
+          codex-ui v0.1.0
         </div>
 
         {saveError && (

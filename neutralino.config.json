@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
-  "applicationId": "com.codexbar.lite",
+  "applicationId": "com.codex.ui",
   "version": "0.1.0",
   "defaultMode": "window",
   "port": 0,
@@ -16,6 +16,9 @@
     "app.exit",
     "events.*",
     "filesystem.readFile",
+    "filesystem.writeFile",
+    "filesystem.removeFile",
+    "filesystem.createDirectory",
     "filesystem.readDirectory",
     "filesystem.getStats",
     "os.execCommand",
@@ -27,21 +30,21 @@
   ],
   "modes": {
     "window": {
-      "title": "codex-bar-lite",
-      "width": 360,
-      "height": 540,
-      "minWidth": 360,
-      "minHeight": 500,
-      "resizable": false,
+      "title": "codex-ui",
+      "width": 420,
+      "height": 620,
+      "minWidth": 380,
+      "minHeight": 560,
+      "resizable": true,
       "alwaysOnTop": true,
-      "skipTaskbar": true,
+      "skipTaskbar": false,
       "exitProcessOnClose": false,
       "injectClientLibrary": true,
       "icon": "public/icons/app.png"
     }
   },
   "cli": {
-    "binaryName": "codex-bar-lite",
+    "binaryName": "codex-ui",
     "distributionPath": "/neutralino-dist/",
     "clientLibrary": "/neutralino.js",
     "resourcesPath": "/dist/",

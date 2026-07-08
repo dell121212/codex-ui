@@ -1,16 +1,15 @@
 {
-  "name": "codex-bar-lite",
+  "name": "codex-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "start":        "./run.sh",
     "dev":          "vite",
-    "build":        "tsc && vite build",
+    "build":        "rm -rf dist && tsc && vite build",
     "preview":      "vite preview",
     "neutralino":       "neu",
-    "neutralino:dev":   "lsof -ti tcp:5173 | xargs -r kill && neu run",
-    "neutralino:dev:raw": "neu run",
-    "neutralino:build": "neu build",
+    "neutralino:build": "rm -rf neutralino-dist/codex-ui && neu build",
     "lint":         "eslint src --ext ts,tsx --report-unused-disable-directives",
     "test":         "vitest run",
     "typecheck":    "tsc --noEmit"

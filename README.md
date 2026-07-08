@@ -1,4 +1,4 @@
-# codex-bar-lite
+# codex-ui
 
 Lightweight Linux tray widget for Codex usage, built with Neutralino + React.
 
@@ -10,37 +10,35 @@ Run one script:
 ./run.sh
 ```
 
-The script checks dependencies, prepares Neutralino, detects Codex auth, runs `codex login` when needed, clears stale dev processes, and starts the app.
+The script installs dependencies, prepares Neutralino, detects Codex auth, runs `codex login` when needed, builds the app, and starts it.
 
-## Commands
+## Developer Checks
 
 ```bash
-./run.sh              # dev mode
-./run.sh --build      # build Neutralino package
-./run.sh --run        # run packaged Linux binary
-
 npm test
 npm run typecheck
 npm run build
 ```
 
-## Output
+## App Directory
 
-Packaged app:
+Generated app files:
 
 ```text
-neutralino-dist/codex-bar-lite/
+neutralino-dist/codex-ui/
 ```
 
 Linux x64 binary:
 
 ```text
-neutralino-dist/codex-bar-lite/bin/neutralino-linux_x64
+neutralino-dist/codex-ui/bin/neutralino-linux_x64
 ```
+
+Autostart can be enabled from the settings panel; for normal use, only run `./run.sh`.
 
 ## Zorin / Wayland
 
-The app is designed as a tray widget, so it intentionally uses `skipTaskbar: true`.
+The app keeps a normal taskbar entry so users can always bring the dashboard back even if the tray icon is unavailable.
 
 On Zorin GNOME Wayland, `run.sh` checks the built-in Zorin AppIndicator extension:
 
@@ -48,7 +46,7 @@ On Zorin GNOME Wayland, `run.sh` checks the built-in Zorin AppIndicator extensio
 zorin-appindicator@zorinos.com
 ```
 
-If the extension was just enabled, log out and log back in before expecting the tray icon to appear.
+If the extension was just enabled, log out and log back in before expecting the tray icon to appear. The main window remains available from the taskbar either way.
 
 ## Auth
 

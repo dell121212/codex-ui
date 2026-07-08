@@ -1,5 +1,7 @@
 import type { ModelUsage, PeriodUsage, SpendInfo, UsageSnapshot, WindowUsage } from '../types';
 
+type UnknownRecord = Record<string, unknown>;
+
 export const EMPTY_WINDOW: WindowUsage = {
   used: 0,
   limit: 0,
@@ -10,27 +12,34 @@ export const EMPTY_WINDOW: WindowUsage = {
 
 export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
 
-export function parseCodexUsage(raw: any): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> | null {
+export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> | null {
+  const data = record(raw);
   const limits =
-    array(raw?.rateLimits) ??
-    array(raw?.rate_limits) ??
-    (raw?.rateLimitsByLimitId ? Object.values(raw.rateLimitsByLimitId) : null) ??
-    (raw?.rate_limits_by_limit_id ? Object.values(raw.rate_limits_by_limit_id) : null);
+    array(data.rateLimits) ??
+    array(data.rate_limits) ??
+    values(data.rateLimitsByLimitId) ??
+    values(data.rate_limits_by_limit_id) ??
+    singleRecord(data.rateLimits) ??
+    singleRecord(data.rate_limits);
   if (!limits?.length) return null;
 
-  const best = limits.find((limit: any) => String(limit?.limitId ?? limit?.limit_id ?? '').toLowerCase() === 'codex') ?? limits[0];
+  const best = limits.find((limit) => {
+    const item = record(limit);
+    return String(item.limitId ?? item.limit_id ?? '').toLowerCase() === 'codex';
+  }) ?? limits[0];
+  const bestRecord = record(best);
   return {
-    window_5h: parseRateLimitWindow(best?.primary) ?? { ...EMPTY_WINDOW },
-    window_weekly: parseRateLimitWindow(best?.secondary) ?? { ...EMPTY_WINDOW },
+    window_5h: parseRateLimitWindow(bestRecord.primary) ?? { ...EMPTY_WINDOW },
+    window_weekly: parseRateLimitWindow(bestRecord.secondary) ?? { ...EMPTY_WINDOW },
     banked_resets: {
-      available: parseCredits(best?.credits ?? raw?.credits),
+      available: parseResetCredits(data.rateLimitResetCredits ?? data.rate_limit_reset_credits),
       lifetime_used: 0,
       last_reset_at: null,
     },
   };
 }
 
-export function parseRateLimitWindow(raw: any, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
+export function parseRateLimitWindow(raw: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
   const percent = numberField(raw, ['usedPercent', 'used_percent']);
   const resetAt = timestampField(raw, ['resetsAt', 'resets_at']);
   if (percent === null || resetAt === null) return null;
@@ -43,20 +52,28 @@ export function parseRateLimitWindow(raw: any, nowUnix = Math.floor(Date.now() /
   };
 }
 
-export function parseCredits(raw: any): number | null {
-  if (!raw || raw.unlimited) return null;
-  if (raw.hasCredits === false || raw.has_credits === false) return 0;
+export function parseCredits(raw: unknown): number | null {
+  const data = record(raw);
+  if (!raw || data.unlimited) return null;
+  if (data.hasCredits === false || data.has_credits === false) return 0;
   const balance = numberField(raw, ['balance']);
   return balance === null ? null : Math.max(0, Math.floor(balance));
 }
 
-export function parseWhamResponse(raw: any): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> {
+export function parseResetCredits(raw: unknown): number | null {
+  const count = numberField(raw, ['availableCount', 'available_count', 'available']);
+  return count === null ? null : Math.max(0, Math.floor(count));
+}
+
+export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> {
+  const data = record(raw);
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
   let window_weekly: WindowUsage = { ...EMPTY_WINDOW };
-  const grants = array(raw?.grants) ?? [];
+  const grants = array(data.grants) ?? [];
 
   for (const grant of grants) {
-    const type = String(grant?.grant_type ?? '');
+    const item = record(grant);
+    const type = String(item.grant_type ?? '');
     if (type.includes('5h') || type.includes('hourly') || type.includes('short')) {
       window_5h = fillWindowFromGrant(grant);
     } else if (type.includes('week') || type.includes('daily') || type.includes('long')) {
@@ -64,24 +81,26 @@ export function parseWhamResponse(raw: any): Pick<UsageSnapshot, 'window_5h' | '
     }
   }
 
-  const flat = raw?.usage;
-  if (flat?.plus_5h || flat?.pro_5h) window_5h = fillWindowFromGrant(flat.plus_5h ?? flat.pro_5h);
-  if (flat?.plus_weekly || flat?.pro_weekly) window_weekly = fillWindowFromGrant(flat.plus_weekly ?? flat.pro_weekly);
+  const flat = record(data.usage);
+  if (flat.plus_5h || flat.pro_5h) window_5h = fillWindowFromGrant(flat.plus_5h ?? flat.pro_5h);
+  if (flat.plus_weekly || flat.pro_weekly) window_weekly = fillWindowFromGrant(flat.plus_weekly ?? flat.pro_weekly);
+  const resetCredits = parseResetCredits(data.rateLimitResetCredits ?? data.rate_limit_reset_credits);
 
   return {
     window_5h,
     window_weekly,
     banked_resets: {
-      available: typeof raw?.banked_resets?.available === 'number' ? raw.banked_resets.available : null,
+      available: resetCredits,
       lifetime_used: 0,
       last_reset_at: null,
     },
   };
 }
 
-export function fillWindowFromGrant(grant: any, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage {
-  const used = Number(grant?.used ?? 0);
-  const limit = Number(grant?.limit ?? 0);
+export function fillWindowFromGrant(grant: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage {
+  const data = record(grant);
+  const used = Number(data.used ?? 0);
+  const limit = Number(data.limit ?? 0);
   const resetAt = timestampField(grant, ['reset_at', 'resetAt']) ?? 0;
   const percent = limit > 0 ? clamp((used / limit) * 100, 0, 100) : 0;
   return {
@@ -103,11 +122,14 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
     const entry = parseJson(line);
     if (!entry) continue;
 
-    const payload = entry.payload;
-    if (payload?.model) currentModel = String(payload.model);
-    if (payload?.type === 'token_count') {
-      const usage = payload?.info?.last_token_usage;
-      if (usage) {
+    const entryRecord = record(entry);
+    const payload = record(entryRecord.payload);
+    if (payload.model) currentModel = String(payload.model);
+    if (payload.type === 'token_count') {
+      const info = record(payload.info);
+      const usageRaw = info.last_token_usage;
+      if (usageRaw) {
+        const usage = record(usageRaw);
         messages += 1;
         const input = Number(usage.input_tokens ?? 0);
         const cached = Math.min(Number(usage.cached_input_tokens ?? 0), input);
@@ -119,15 +141,17 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
       }
     }
 
-    const message = entry.message;
-    const role = entry.role ?? message?.role;
-    const model = entry.model ?? message?.model ?? currentModel ?? 'unknown';
-    const usage = entry.usage ?? message?.usage;
+    const message = record(entryRecord.message);
+    const role = entryRecord.role ?? message.role;
+    const model = entryRecord.model ?? message.model ?? currentModel ?? 'unknown';
+    const usageRaw = entryRecord.usage ?? message.usage;
     if (role) messages += 1;
-    if (usage) {
+    if (usageRaw) {
+      const usage = record(usageRaw);
+      const promptDetails = record(usage.prompt_tokens_details);
       const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens ?? 0);
       const cached = Math.min(
-        Number(usage.cached_input_tokens ?? usage.cachedInputTokens ?? usage.prompt_tokens_details?.cached_tokens ?? 0),
+        Number(usage.cached_input_tokens ?? usage.cachedInputTokens ?? promptDetails.cached_tokens ?? 0),
         input,
       );
       const output = Number(usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0);
@@ -140,11 +164,12 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
   return { messages, tokens, modelMap };
 }
 
-export function parseLocalLimitWindow(raw: any, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
-  const percent = Number(raw?.used_percent ?? raw?.usedPercent);
+export function parseLocalLimitWindow(raw: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
+  const data = record(raw);
+  const percent = Number(data.used_percent ?? data.usedPercent);
   if (!Number.isFinite(percent)) return null;
-  let resetAt = Number(raw?.resets_at ?? raw?.resetsAt ?? 0);
-  const windowMinutes = Number(raw?.window_minutes ?? raw?.windowDurationMins ?? 0);
+  let resetAt = Number(data.resets_at ?? data.resetsAt ?? 0);
+  const windowMinutes = Number(data.window_minutes ?? data.windowDurationMins ?? 0);
   if (resetAt > 0 && resetAt <= nowUnix && windowMinutes > 0) {
     const windowSecs = windowMinutes * 60;
     resetAt = resetAt + (Math.floor((nowUnix - resetAt) / windowSecs) + 1) * windowSecs;
@@ -252,7 +277,7 @@ export function priceFor(model: string) {
   return PRICES.find((price) => lower.startsWith(price.prefix) || lower.includes(price.prefix)) ?? { input: 2.5, cached: 0.25, output: 10 };
 }
 
-export function parseJson(line: string): any | null {
+export function parseJson(line: string): unknown | null {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith('//')) return null;
   try {
@@ -262,9 +287,10 @@ export function parseJson(line: string): any | null {
   }
 }
 
-export function timestampField(raw: any, keys: string[]): number | null {
+export function timestampField(raw: unknown, keys: string[]): number | null {
+  const data = record(raw);
   for (const key of keys) {
-    const value = raw?.[key];
+    const value = data[key];
     if (typeof value === 'number') return value > 10_000_000_000 ? Math.floor(value / 1000) : value;
     if (typeof value === 'string') {
       const numeric = Number(value);
@@ -276,16 +302,35 @@ export function timestampField(raw: any, keys: string[]): number | null {
   return null;
 }
 
-export function numberField(raw: any, keys: string[]): number | null {
+export function numberField(raw: unknown, keys: string[]): number | null {
+  const data = record(raw);
   for (const key of keys) {
-    const value = raw?.[key];
+    const value = data[key];
     if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'bigint') return Number(value);
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
   }
   return null;
 }
 
-export function array(value: any): any[] | null {
+export function array(value: unknown): unknown[] | null {
   return Array.isArray(value) ? value : null;
+}
+
+function values(value: unknown): unknown[] | null {
+  const data = value !== null && typeof value === 'object' ? value as UnknownRecord : null;
+  return data ? Object.values(data) : null;
+}
+
+function singleRecord(value: unknown): unknown[] | null {
+  return value !== null && typeof value === 'object' ? [value] : null;
+}
+
+function record(value: unknown): UnknownRecord {
+  return value !== null && typeof value === 'object' ? value as UnknownRecord : {};
 }
 
 export function clamp(value: number, min: number, max: number): number {

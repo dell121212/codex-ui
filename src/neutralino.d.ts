@@ -16,12 +16,13 @@ declare global {
       exit: () => Promise<void>;
     };
     events: {
-      on: (event: string, handler: (event: { detail: any }) => void) => Promise<void> | void;
-      dispatch?: (event: string, detail?: any) => Promise<void> | void;
+      on: (event: string, handler: (event: { detail: unknown }) => void) => Promise<void> | void;
+      dispatch?: (event: string, detail?: unknown) => Promise<void> | void;
     };
     filesystem: {
       readFile: (filename: string, options?: { pos?: number; size?: number }) => Promise<string>;
       writeFile: (filename: string, data: string) => Promise<void>;
+      removeFile: (filename: string) => Promise<void>;
       createDirectory: (path: string) => Promise<void>;
       readDirectory: (path: string, options?: { recursive?: boolean }) => Promise<Array<{ entry: string; type: 'FILE' | 'DIRECTORY' }>>;
       getStats: (path: string) => Promise<{ size: number; isFile: boolean; isDirectory: boolean; createdAt: number; modifiedAt: number }>;

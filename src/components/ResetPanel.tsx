@@ -31,20 +31,17 @@ export default function ResetPanel({ banked }: Props) {
   }, [showConfirm]);
 
   const available    = banked?.available ?? null;
-  const quotaKnown   = available != null;
+  const hasAvailable = available != null && available > 0;
   const lifetimeUsed = banked?.lifetime_used ?? 0;
-  // Estimate total slots shown: available + used, capped for display
-  const totalDisplay = quotaKnown
-    ? Math.min(Math.max(available + lifetimeUsed, 1), MAX_DOTS)
-    : Math.min(Math.max(lifetimeUsed + 1, 1), MAX_DOTS);
+  const visibleSlots = hasAvailable ? Math.min(available, MAX_DOTS) : 0;
 
   const handleReset = async () => {
-    if ((quotaKnown && available <= 0) || loading) return;
+    if (loading) return;
     setShowConfirm(true);
   };
 
   const confirmReset = async () => {
-    if ((quotaKnown && available <= 0) || loading) return;
+    if (loading) return;
     setShowConfirm(false);
     setLoading(true);
     setFeedback(null);
@@ -74,11 +71,9 @@ export default function ResetPanel({ banked }: Props) {
             <span>手动重置</span>
           </div>
           <div className="reset-subtitle">
-            {!quotaKnown
-              ? `额度未知 · 累计已用 ${lifetimeUsed} 次`
-              : available > 0
+            {hasAvailable
               ? `可用 ${available} 次 · 累计已用 ${lifetimeUsed} 次`
-              : `暂无可用 · 累计已用 ${lifetimeUsed} 次`}
+              : '未识别到可用重置次数'}
           </div>
           {lastReset && (
             <div className="reset-last">上次重置：{lastReset}</div>
@@ -88,10 +83,10 @@ export default function ResetPanel({ banked }: Props) {
         <button
           className="reset-btn"
           onClick={handleReset}
-          disabled={(quotaKnown && available <= 0) || loading}
-          aria-label={quotaKnown ? `重置 5 小时窗口，剩余 ${available} 次` : '尝试重置 5 小时窗口'}
+          disabled={loading}
+          aria-label={hasAvailable ? `重置 5 小时窗口，剩余 ${available} 次` : '尝试重置 5 小时窗口'}
         >
-          {loading ? '重置中…' : !quotaKnown ? '尝试重置' : available > 0 ? '重置窗口' : '已用完'}
+          {loading ? '重置中…' : hasAvailable ? '重置窗口' : '尝试重置'}
         </button>
       </div>
 
@@ -125,19 +120,19 @@ export default function ResetPanel({ banked }: Props) {
       )}
 
       {/* Dot indicator row */}
-      <div className="reset-dots" aria-label={quotaKnown ? `${totalDisplay} 次中还有 ${available} 次可用` : '重置额度未知'}>
-        {Array.from({ length: totalDisplay }).map((_, i) => (
+      <div className="reset-dots" aria-label={hasAvailable ? `当前可用 ${available} 次` : '未识别到可用重置次数'}>
+        {Array.from({ length: visibleSlots }).map((_, i) => (
           <div
             key={i}
             className="reset-dot"
             style={{
-              background: quotaKnown && i < available ? '#ff9f0a' : 'var(--sep)',
+              background: hasAvailable && i < available ? '#ff9f0a' : 'var(--sep)',
               transition: 'background 300ms ease',
             }}
           />
         ))}
         <span className="reset-dot-label">
-          {quotaKnown ? `${available}/${totalDisplay}` : '?/?'}
+          {hasAvailable ? `${available} 次` : '未识别'}
         </span>
       </div>
 

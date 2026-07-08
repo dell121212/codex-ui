@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# codex-bar-lite one-shot launcher
+# codex-ui one-shot launcher
 #
 # Usage:
-#   ./run.sh             Start Neutralino dev mode
-#   ./run.sh --build     Build the Neutralino package
-#   ./run.sh --run       Build if needed, then run the packaged Linux binary
+#   ./run.sh             Install, build, and start the app
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -21,11 +19,10 @@ warn() { echo -e "${YELLOW}!${NC} $*"; }
 err()  { echo -e "${RED}ERROR:${NC} $*" >&2; exit 1; }
 ok()   { echo -e "${GREEN}✓${NC} $*"; }
 
-MODE="${1:-dev}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-APP_BIN="neutralino-dist/codex-bar-lite/bin/neutralino-linux_x64"
+APP_BIN="neutralino-dist/codex-ui/bin/neutralino-linux_x64"
 
 has_codex_auth() {
   node -e '
@@ -44,7 +41,7 @@ try {
 print_header() {
   echo -e "${BOLD}${BLUE}"
   echo "  ╔════════════════════════════════╗"
-  echo "  ║    codex-bar-lite  v0.1.0     ║"
+  echo "  ║      codex-ui  v0.1.0         ║"
   echo "  ║   Neutralino · Codex usage    ║"
   echo "  ╚════════════════════════════════╝"
   echo -e "${NC}"
@@ -174,74 +171,39 @@ ensure_codex_login() {
   fi
 }
 
-clear_dev_port() {
-  if command -v lsof >/dev/null 2>&1; then
-    local pids
-    pids="$(lsof -ti tcp:5173 || true)"
-    if [[ -n "$pids" ]]; then
-      warn "5173 端口被旧开发进程占用，正在关闭..."
-      # shellcheck disable=SC2086
-      kill $pids || true
-      sleep 0.5
-    fi
-  fi
-}
-
 clear_old_app_processes() {
   local pids
-  pids="$(pgrep -f 'neutralino-linux_x64|codex-bar-lite/bin/neutralino' || true)"
+  pids="$(pgrep -f 'neutralino-linux_x64|codex-ui/bin/neutralino' || true)"
   if [[ -n "$pids" ]]; then
-    warn "检测到旧的 codex-bar-lite/Neutralino 进程，正在关闭..."
+    warn "检测到旧的 codex-ui/Neutralino 进程，正在关闭..."
     # shellcheck disable=SC2086
     kill $pids || true
     sleep 0.5
   fi
 }
 
-build_package() {
-  log "构建 Neutralino 发布包..."
+build_app() {
+  log "构建应用..."
+  rm -rf dist neutralino-dist/codex-ui
   npm run neutralino:build
-  ok "构建完成：neutralino-dist/codex-bar-lite"
+  ok "构建完成"
 }
 
-run_packaged() {
-  if [[ ! -x "$APP_BIN" ]]; then
-    build_package
-  fi
+run_app() {
+  build_app
   clear_old_app_processes
-  log "启动发布版..."
+  log "启动应用..."
   "$APP_BIN"
 }
 
-start_dev() {
-  clear_old_app_processes
-  clear_dev_port
-  log "启动开发版..."
-  info "只需要运行本脚本；脚本会处理依赖、登录态和端口。"
-  info "按 Ctrl+C 退出。"
-  npm run neutralino:dev:raw
-}
-
 print_header
+if [[ "$#" -gt 0 ]]; then
+  warn "run.sh 不需要参数，已忽略：$*"
+fi
 ensure_node
 ensure_npm_deps
 ensure_neutralino_runtime
 ensure_icons
 ensure_tray_support
-
-case "$MODE" in
-  --build | --release)
-    build_package
-    ;;
-  --run | --start)
-    ensure_codex_login
-    run_packaged
-    ;;
-  dev | --dev | "")
-    ensure_codex_login
-    start_dev
-    ;;
-  *)
-    err "未知参数：$MODE。可用参数：--build, --run"
-    ;;
-esac
+ensure_codex_login
+run_app

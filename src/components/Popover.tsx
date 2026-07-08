@@ -15,7 +15,7 @@ import SettingsPanel from './SettingsPanel';
 
 export default function Popover() {
   const [showSettings, setShowSettings] = useState(false);
-  const { data, isRefreshing, refresh, lastUpdated, errorKind, checkFirstLaunch } = useStore();
+  const { data, isRefreshing, refresh, lastUpdated, error, errorKind, checkFirstLaunch } = useStore();
 
   // Open settings automatically when neither Codex auth nor fallback cookie is configured.
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function Popover() {
       <div className="popover-body">
         <SetupBanner
           errorKind={errorKind}
-          error={data?.error}
+          error={data?.error ?? error}
           onOpenSettings={() => setShowSettings(true)}
         />
 

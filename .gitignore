@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+neutralino-dist/
+bin/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Logs and caches
+*.log
+.vite/
+.eslintcache
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local agent metadata
+.agents/
+.codex/

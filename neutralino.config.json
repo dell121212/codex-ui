@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
+  "applicationId": "com.codexbar.lite",
+  "version": "0.1.0",
+  "defaultMode": "window",
+  "port": 0,
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "singlePageServe": true,
+  "tokenSecurity": "one-time",
+  "url": "/",
+  "documentRoot": "/dist/",
+  "storageLocation": "system",
+  "dataLocation": "system",
+  "nativeAllowList": [
+    "app.exit",
+    "events.*",
+    "filesystem.readFile",
+    "filesystem.readDirectory",
+    "filesystem.getStats",
+    "os.execCommand",
+    "os.getPath",
+    "os.showNotification",
+    "os.setTray",
+    "storage.*",
+    "window.*"
+  ],
+  "modes": {
+    "window": {
+      "title": "codex-bar-lite",
+      "width": 360,
+      "height": 540,
+      "minWidth": 360,
+      "minHeight": 500,
+      "resizable": false,
+      "alwaysOnTop": true,
+      "skipTaskbar": true,
+      "exitProcessOnClose": false,
+      "injectClientLibrary": true,
+      "icon": "public/icons/app.png"
+    }
+  },
+  "cli": {
+    "binaryName": "codex-bar-lite",
+    "distributionPath": "/neutralino-dist/",
+    "clientLibrary": "/neutralino.js",
+    "resourcesPath": "/dist/",
+    "resourcesExclude": ".*\\.map$",
+    "frontendLibrary": {
+      "patchFile": "/dist/index.html",
+      "devUrl": "http://localhost:5173"
+    },
+    "hostProject": {
+      "projectPath": "/",
+      "devCommand": "npm run dev",
+      "buildCommand": "npm run build",
+      "buildPath": "/dist/"
+    },
+    "binaryVersion": "nightly",
+    "clientVersion": "6.8.0"
+  }
+}

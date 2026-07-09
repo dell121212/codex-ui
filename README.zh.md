@@ -6,6 +6,9 @@ Codex 在 Windows 和 macOS 上有专门的桌面应用，但 Linux 用户很多
 
 当前技术栈：Neutralino + React + TypeScript。
 
+<img width="615" height="698" alt="image" src="https://github.com/user-attachments/assets/9bed0445-c887-4be8-8fcd-a2e4da8845c4" />
+
+
 ## 亮点
 
 - 自动抓取 `~/.codex/auth.json` 中的 Codex token

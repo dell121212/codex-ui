@@ -6,6 +6,9 @@ codex-ui exists to close that gap. It is a lightweight Linux tray dashboard for 
 
 Built with Neutralino + React + TypeScript.
 
+<img width="615" height="698" alt="image" src="https://github.com/user-attachments/assets/ce11be6b-54d2-4fad-b1cd-67465aec918a" />
+
+
 ## Highlights
 
 - Automatically reads the Codex token from `~/.codex/auth.json`

@@ -6,16 +6,26 @@ codex-ui exists to close that gap. It is a lightweight Linux tray dashboard for 
 
 Built with Neutralino + React + TypeScript.
 
-<img width="615" height="698" alt="image" src="https://github.com/user-attachments/assets/ce11be6b-54d2-4fad-b1cd-67465aec918a" />
+## Screenshots
 
+<p align="center">
+  <img width="615" height="698" alt="codex-ui preview" src="https://github.com/user-attachments/assets/ce11be6b-54d2-4fad-b1cd-67465aec918a" />
+</p>
+
+<p align="center">
+  <img src="./截图%202026-07-10%2013-27-13.png" alt="Codex usage dashboard" width="360" />
+  <img src="./截图%202026-07-10%2013-27-20.png" alt="codex-ui settings" width="360" />
+</p>
 
 ## Highlights
 
-- Automatically reads the Codex token from `~/.codex/auth.json`
+- Reads authenticated usage through the local Codex app-server
 - Starts `codex login` for you when no token is available
 - One-command setup and launch with `./run.sh`
 - Simple autostart setup from the settings panel
-- Tray dashboard for 5-hour usage, weekly usage, and reset times
+- Dashboard for primary limits, independent legacy-model limits, and reset times
+- Shows server-reported reset credits and consumes them only on explicit confirmation
+- Estimates API-equivalent USD cost from local Codex sessions
 - Keeps a taskbar entry on Zorin / Wayland so the window remains recoverable
 
 ## Use
@@ -26,7 +36,7 @@ Run one script:
 ./run.sh
 ```
 
-The script installs dependencies, prepares Neutralino, detects Codex auth, runs `codex login` when needed, builds the app, and starts it.
+The script installs project dependencies, prepares the pinned Neutralino runtime, detects Codex auth, runs `codex login` when needed, builds the app, and starts it. It does not install system packages by default.
 
 ## Developer Checks
 
@@ -62,6 +72,12 @@ On Zorin GNOME Wayland, `run.sh` checks the built-in Zorin AppIndicator extensio
 zorin-appindicator@zorinos.com
 ```
 
+To explicitly install or enable tray support, run:
+
+```bash
+./run.sh --setup-tray
+```
+
 If the extension was just enabled, log out and log back in before expecting the tray icon to appear. The main window remains available from the taskbar either way.
 
 ## Auth
@@ -74,4 +90,10 @@ The app automatically reads:
 
 If no Codex token is available, `run.sh` starts `codex login`. The user only needs to follow the Codex browser/CLI authorization prompt.
 
-Cookie input remains as a fallback only.
+The app does not store ChatGPT cookies. On older Codex CLI versions without a compatible app-server, it falls back to read-only HTTP requests with the same CLI token.
+
+## Data Notes
+
+- All quota buckets come from `account/rateLimits/read` and are rendered dynamically by server-provided `limitId`.
+- Reset availability comes from `rateLimitResetCredits.availableCount`; only `reset` and `alreadyRedeemed` outcomes count as success.
+- USD figures are API-equivalent estimates, not subscription charges. Unknown models are left unpriced instead of receiving a guessed default price.

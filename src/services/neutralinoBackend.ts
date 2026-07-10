@@ -1,7 +1,9 @@
 import type {
   AuthStatus,
   BankedResets,
+  RateLimitBucket,
   PeriodUsage,
+  ResetOutcome,
   Settings,
   UsageSnapshot,
   WindowUsage,
@@ -28,7 +30,6 @@ const WHAM_RESET_CREDIT_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-r
 const AUTOSTART_ID = 'codex-ui.desktop';
 
 const DEFAULT_SETTINGS: Settings = {
-  chatgpt_cookie: undefined,
   refresh_interval_secs: 60,
   autostart: false,
   notify_at_90_pct: true,
@@ -40,18 +41,22 @@ const EMPTY_PERIOD: PeriodUsage = {
   models: [],
 };
 
-type Auth =
-  | { kind: 'bearer'; accessToken: string; accountId?: string }
-  | { kind: 'cookie'; cookie: string };
+type Auth = { kind: 'bearer'; accessToken: string; accountId?: string };
 
 type CodexAuthResult =
   | { ok: true; auth: Auth & { kind: 'bearer' }; path: string }
   | { ok: false; path?: string; reason: string };
 
 let cached: { snapshot: UsageSnapshot; at: number } | null = null;
+let refreshInFlight: Promise<UsageSnapshot> | null = null;
 let quotaAlertActive = false;
 let refreshTimer: number | null = null;
 const listeners = new Set<(snapshot: UsageSnapshot) => void>();
+const rolloutCache = new Map<string, {
+  modifiedAt: number;
+  size: number;
+  parsed: ReturnType<typeof parseRolloutFile>;
+}>();
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -102,59 +107,54 @@ export async function getUsage(): Promise<UsageSnapshot> {
   if (cached && Date.now() - cached.at < 55_000) {
     return cached.snapshot;
   }
-  return refreshUsage();
+  const localSnapshot = await fetchSnapshot(false);
+  cached = { snapshot: localSnapshot, at: Date.now() };
+  await afterSnapshot(localSnapshot);
+  void refreshUsage();
+  return localSnapshot;
 }
 
 export async function refreshUsage(): Promise<UsageSnapshot> {
-  const snapshot = await fetchSnapshot();
-  cached = { snapshot, at: Date.now() };
-  await afterSnapshot(snapshot);
-  listeners.forEach((listener) => listener(snapshot));
-  return snapshot;
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const snapshot = await fetchSnapshot();
+    cached = { snapshot, at: Date.now() };
+    await afterSnapshot(snapshot);
+    listeners.forEach((listener) => listener(snapshot));
+    return snapshot;
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
 }
 
-export async function executeReset(): Promise<boolean> {
-  const settings = await loadSettings();
-  const auth = await resolveAuth(settings);
-
-  let ok = false;
-  if (auth) {
-    ok = await consumeResetCredit(auth);
+export async function executeReset(creditId?: string): Promise<ResetOutcome> {
+  let outcome: ResetOutcome = 'failed';
+  try {
+    const response = record(await callCodexAppServer('account/rateLimitResetCredit/consume', {
+      idempotencyKey: createIdempotencyKey(),
+      creditId: creditId ?? null,
+    }));
+    outcome = parseResetOutcome(response.outcome);
+  } catch {
+    const auth = await loadCodexAuth();
+    if (auth.ok) outcome = await consumeResetCredit(auth.auth, creditId);
   }
 
-  if (!ok) {
-    const api = nativeApi();
-    if (api) {
-      try {
-        const out = await api.os.execCommand('codex /reset');
-        const text = `${out.stdOut}\n${out.stdErr}`.toLowerCase();
-        ok = out.exitCode === 0 || text.includes('reset');
-      } catch {
-        ok = false;
-      }
-    }
-  }
-
-  if (ok) {
+  if (outcome === 'reset' || outcome === 'alreadyRedeemed') {
     await incrementResetCount();
     await refreshUsage();
   }
 
-  return ok;
-}
-
-export async function testConnection(cookie: string): Promise<boolean> {
-  try {
-    const result = await fetchWhamUsage({ kind: 'cookie', cookie });
-    return !!result;
-  } catch {
-    return false;
-  }
+  return outcome;
 }
 
 export async function checkFirstLaunch(): Promise<boolean> {
-  const settings = await loadSettings();
-  return !(await resolveAuth(settings));
+  return !(await loadCodexAuth()).ok;
 }
 
 export async function getAuthStatus(): Promise<AuthStatus> {
@@ -167,15 +167,6 @@ export async function getAuthStatus(): Promise<AuthStatus> {
       message: codex.auth.accountId
         ? `已自动读取 Codex 登录态：${codex.auth.accountId}`
         : '已自动读取 Codex 登录态',
-    };
-  }
-
-  const settings = await loadSettings();
-  if (settings.chatgpt_cookie?.trim()) {
-    return {
-      source: 'cookie',
-      auth_path: codex.path,
-      message: '未找到 Codex token，当前使用备用 Cookie',
     };
   }
 
@@ -207,7 +198,6 @@ export async function loadSettings(): Promise<Settings> {
 
 export async function saveSettings(settings: Settings): Promise<void> {
   const normalized: Settings = {
-    chatgpt_cookie: settings.chatgpt_cookie?.trim() || undefined,
     refresh_interval_secs: clamp(Number(settings.refresh_interval_secs), 30, 300),
     autostart: !!settings.autostart,
     notify_at_90_pct: !!settings.notify_at_90_pct,
@@ -298,43 +288,55 @@ export async function quitApp(): Promise<void> {
   await nativeApi()?.app.exit();
 }
 
-async function fetchSnapshot(): Promise<UsageSnapshot> {
-  const settings = await loadSettings();
+async function fetchSnapshot(includeRemote = true): Promise<UsageSnapshot> {
   const now = new Date();
   let error: string | undefined;
   let error_kind: string | undefined;
+  let provider = 'local-session';
 
-  const today_local = enrichWithCosts(await parsePeriodUsage('today'));
-  const month_local = enrichWithCosts(await parsePeriodUsage('month'));
+  const localUsage = await parseLocalUsage();
+  const today_local = enrichWithCosts(localUsage.today);
+  const month_local = enrichWithCosts(localUsage.month);
   const spend = computeSpend(month_local);
 
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
   let window_weekly: WindowUsage = { ...EMPTY_WINDOW };
+  let rate_limits: RateLimitBucket[] = [];
   let banked_resets: BankedResets = {
     available: null,
+    credits: [],
     lifetime_used: await getResetCount(),
     last_reset_at: await getLastResetAt(),
   };
 
-  const auth = await resolveAuth(settings);
-  if (auth) {
+  if (includeRemote) try {
+    let remote: Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'>;
     try {
-      const remote = await fetchWhamUsage(auth);
-      window_5h = remote.window_5h;
-      window_weekly = remote.window_weekly;
-      banked_resets = {
-        ...remote.banked_resets,
-        lifetime_used: await getResetCount(),
-        last_reset_at: await getLastResetAt(),
-      };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      error = message;
-      error_kind = message.includes('401') || message.includes('403') ? 'COOKIE_EXPIRED' : 'NETWORK_ERROR';
+      remote = parseCodexUsage(await callCodexAppServer('account/rateLimits/read', {}))
+        ?? (() => { throw new Error('PARSE_ERROR: Codex app-server 未返回可识别的额度'); })();
+      provider = 'codex-app-server';
+    } catch (appServerError) {
+      const auth = await loadCodexAuth();
+      if (!auth.ok) throw new Error(`NO_AUTH: ${auth.reason}`);
+      remote = await fetchWhamUsage(auth.auth);
+      provider = 'codex-http';
+      if (!remote.rate_limits.length) throw appServerError;
     }
-  } else {
-    error = '未检测到 Codex 登录态，仅显示本地数据';
-    error_kind = 'NO_AUTH';
+    window_5h = remote.window_5h;
+    window_weekly = remote.window_weekly;
+    rate_limits = remote.rate_limits;
+    banked_resets = {
+      ...remote.banked_resets,
+      lifetime_used: await getResetCount(),
+      last_reset_at: await getLastResetAt(),
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    error = message.replace(/^(NO_AUTH|PARSE_ERROR):\s*/, '');
+    if (message.startsWith('NO_AUTH:')) error_kind = 'NO_AUTH';
+    else if (message.startsWith('PARSE_ERROR:')) error_kind = 'PARSE_ERROR';
+    else if (message.includes('401') || message.includes('403')) error_kind = 'COOKIE_EXPIRED';
+    else error_kind = 'NETWORK_ERROR';
   }
 
   const localLimits = await parseLatestRateLimits();
@@ -345,17 +347,23 @@ async function fetchSnapshot(): Promise<UsageSnapshot> {
     if (localLimits.secondary.percent > 0 && (window_weekly.limit === 0 || window_weekly.percent === 0)) {
       window_weekly = localLimits.secondary;
     }
-    if (window_5h.percent > 0 || window_weekly.percent > 0) {
-      error = undefined;
-      error_kind = undefined;
+    if (!rate_limits.length && (window_5h.limit > 0 || window_weekly.limit > 0)) {
+      rate_limits = [{
+        id: 'codex',
+        name: null,
+        primary: window_5h,
+        secondary: window_weekly,
+        plan_type: null,
+      }];
     }
   }
 
   return {
     fetched_at: now.toISOString(),
-    provider: 'codex',
+    provider,
     window_5h,
     window_weekly,
+    rate_limits,
     today_local,
     month_local,
     banked_resets,
@@ -415,13 +423,6 @@ async function scheduleRefresh() {
   }, clamp(settings.refresh_interval_secs, 30, 300) * 1000);
 }
 
-async function resolveAuth(settings: Settings): Promise<Auth | null> {
-  const codexAuth = await loadCodexAuth();
-  if (codexAuth.ok) return codexAuth.auth;
-  const cookie = settings.chatgpt_cookie?.trim();
-  return cookie ? { kind: 'cookie', cookie } : null;
-}
-
 async function loadCodexAuth(): Promise<CodexAuthResult> {
   const api = nativeApi();
   if (!api) {
@@ -464,17 +465,15 @@ async function loadCodexAuth(): Promise<CodexAuthResult> {
   }
 }
 
-async function fetchWhamUsage(auth: Auth): Promise<Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'>> {
-  if (auth.kind === 'bearer') {
-    try {
-      const codex = await curlJson(CODEX_USAGE_URL, auth, 'GET');
-      if (codex.ok) {
-        const parsed = parseCodexUsage(codex.json);
-        if (parsed) return parsed;
-      }
-    } catch {
-      // Fall through to legacy wham endpoint.
-    }
+async function fetchWhamUsage(auth: Auth): Promise<Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'>> {
+  const codex = await curlJson(CODEX_USAGE_URL, auth, 'GET');
+  if (codex.ok) {
+    const parsed = parseCodexUsage(codex.json);
+    if (parsed) return parsed;
+    throw new Error('PARSE_ERROR: Codex usage 响应格式无法识别');
+  }
+  if (codex.status !== 404) {
+    throw new Error(`usage 返回 HTTP ${codex.status}`);
   }
 
   const wham = await curlJson(WHAM_USAGE_URL, auth, 'GET');
@@ -484,14 +483,76 @@ async function fetchWhamUsage(auth: Auth): Promise<Pick<UsageSnapshot, 'window_5
   return parseWhamResponse(wham.json);
 }
 
-async function consumeResetCredit(auth: Auth): Promise<boolean> {
+async function callCodexAppServer(method: string, params: unknown): Promise<unknown> {
+  const api = nativeApi();
+  if (!api) throw new Error('Codex app-server 需要 Neutralino 运行时');
+
+  const request = JSON.stringify({ method, id: 2, params });
+  const bridge = `
+const { spawn } = require('node:child_process');
+const child = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'pipe'] });
+let buffer = '';
+let stderr = '';
+let settled = false;
+const timer = setTimeout(() => finish(1, 'Codex app-server 请求超时'), 30000);
+function send(value) { child.stdin.write(JSON.stringify(value) + '\\n'); }
+function finish(code, message) {
+  if (settled) return;
+  settled = true;
+  clearTimeout(timer);
+  if (message) (code === 0 ? process.stdout : process.stderr).write(message);
+  child.kill();
+  setTimeout(() => process.exit(code), 50);
+}
+child.on('error', error => finish(1, error.message));
+child.stderr.on('data', chunk => { stderr += chunk; });
+child.stdout.on('data', chunk => {
+  buffer += chunk;
+  for (;;) {
+    const newline = buffer.indexOf('\\n');
+    if (newline < 0) break;
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    let message;
+    try { message = JSON.parse(line); } catch { continue; }
+    if (message.id === 1) {
+      send({ method: 'initialized', params: {} });
+      send(${request});
+    } else if (message.id === 2) {
+      if (message.error) finish(1, JSON.stringify(message.error));
+      else finish(0, JSON.stringify(message.result));
+    }
+  }
+});
+child.on('exit', code => {
+  if (!settled) finish(1, stderr || 'Codex app-server 提前退出：' + code);
+});
+send({
+  method: 'initialize',
+  id: 1,
+  params: {
+    clientInfo: { name: 'codex-ui', title: 'Codex UI', version: '0.1.0' },
+    capabilities: null,
+  },
+});`;
+
+  const out = await api.os.execCommand(`node -e ${shellQuote(bridge)}`);
+  if (out.exitCode !== 0 || !out.stdOut.trim()) {
+    throw new Error(out.stdErr.trim() || 'Codex app-server 调用失败');
+  }
+  try {
+    return JSON.parse(out.stdOut);
+  } catch {
+    throw new Error('PARSE_ERROR: Codex app-server 返回了无效 JSON');
+  }
+}
+
+async function consumeResetCredit(auth: Auth, creditId?: string): Promise<ResetOutcome> {
   const idempotencyKey = createIdempotencyKey();
-  const urls = auth.kind === 'bearer'
-    ? [CODEX_RESET_CREDIT_URL, WHAM_RESET_CREDIT_URL]
-    : [WHAM_RESET_CREDIT_URL];
+  const urls = [CODEX_RESET_CREDIT_URL, WHAM_RESET_CREDIT_URL];
   const bodies = [
-    { idempotencyKey },
-    { idempotency_key: idempotencyKey },
+    { idempotencyKey, creditId },
+    { idempotency_key: idempotencyKey, credit_id: creditId },
   ];
 
   for (const url of urls) {
@@ -499,17 +560,21 @@ async function consumeResetCredit(auth: Auth): Promise<boolean> {
       try {
         const result = await curlJson(url, auth, 'POST', body);
         if (!result.ok) continue;
-        const outcome = String(record(result.json).outcome ?? '');
-        if (outcome === 'reset' || outcome === 'alreadyRedeemed') return true;
-        if (outcome === 'noCredit' || outcome === 'nothingToReset') return false;
-        return false;
+        const outcome = parseResetOutcome(record(result.json).outcome);
+        if (outcome !== 'failed') return outcome;
       } catch {
         // Try the next supported endpoint/body shape.
       }
     }
   }
 
-  return false;
+  return 'failed';
+}
+
+function parseResetOutcome(value: unknown): ResetOutcome {
+  return value === 'reset' || value === 'nothingToReset' || value === 'noCredit' || value === 'alreadyRedeemed'
+    ? value
+    : 'failed';
 }
 
 async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', requestBody?: unknown): Promise<{ ok: boolean; status: number; json: unknown }> {
@@ -518,13 +583,11 @@ async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', request
     throw new Error('Neutralino API unavailable');
   }
 
-  const headers = auth.kind === 'bearer'
-    ? [
-        `header = ${curlConfigQuote(`Authorization: Bearer ${auth.accessToken}`)}`,
-        `header = ${curlConfigQuote('OAI-Product-Sku: codex')}`,
-        auth.accountId ? `header = ${curlConfigQuote(`ChatGPT-Account-Id: ${auth.accountId}`)}` : '',
-      ]
-    : [`header = ${curlConfigQuote(`Cookie: ${auth.cookie}`)}`];
+  const headers = [
+    `header = ${curlConfigQuote(`Authorization: Bearer ${auth.accessToken}`)}`,
+    `header = ${curlConfigQuote('OAI-Product-Sku: codex')}`,
+    auth.accountId ? `header = ${curlConfigQuote(`ChatGPT-Account-Id: ${auth.accountId}`)}` : '',
+  ];
   const config = [
     `url = ${curlConfigQuote(url)}`,
     method === 'POST' ? 'request = "POST"' : '',
@@ -561,31 +624,58 @@ async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', request
   };
 }
 
-async function parsePeriodUsage(period: 'today' | 'month'): Promise<PeriodUsage> {
+async function parseLocalUsage(): Promise<{ today: PeriodUsage; month: PeriodUsage }> {
   const api = nativeApi();
-  if (!api) return { ...EMPTY_PERIOD };
+  if (!api) return { today: { ...EMPTY_PERIOD }, month: { ...EMPTY_PERIOD } };
 
   const today = new Date();
-  const from = period === 'today' ? today : new Date(today.getFullYear(), today.getMonth(), 1);
-  const modelMap = new Map<string, { input: number; cached: number; output: number }>();
-  let messages = 0;
-  let tokens = 0;
+  const from = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthMap = new Map<string, { input: number; cached: number; output: number }>();
+  const todayMap = new Map<string, { input: number; cached: number; output: number }>();
+  let monthMessages = 0;
+  let monthTokens = 0;
+  let todayMessages = 0;
+  let todayTokens = 0;
+  const activeFiles = new Set<string>();
 
   for (const day of daysBetween(from, today)) {
+    const isToday = day.getFullYear() === today.getFullYear()
+      && day.getMonth() === today.getMonth()
+      && day.getDate() === today.getDate();
     for (const file of await rolloutFilesForDay(day)) {
+      activeFiles.add(file);
       try {
-        const content = await api.filesystem.readFile(file);
-        const parsed = parseRolloutFile(content);
-        messages += parsed.messages;
-        tokens += parsed.tokens;
-        mergeModelMap(modelMap, parsed.modelMap);
+        const stats = await api.filesystem.getStats(file);
+        const cachedFile = rolloutCache.get(file);
+        let parsed: ReturnType<typeof parseRolloutFile>;
+        if (!cachedFile || cachedFile.modifiedAt !== stats.modifiedAt || cachedFile.size !== stats.size) {
+          parsed = parseRolloutFile(await api.filesystem.readFile(file));
+          rolloutCache.set(file, { modifiedAt: stats.modifiedAt, size: stats.size, parsed });
+        } else {
+          parsed = cachedFile.parsed;
+        }
+        monthMessages += parsed.messages;
+        monthTokens += parsed.tokens;
+        mergeModelMap(monthMap, parsed.modelMap);
+        if (isToday) {
+          todayMessages += parsed.messages;
+          todayTokens += parsed.tokens;
+          mergeModelMap(todayMap, parsed.modelMap);
+        }
       } catch {
         // Ignore unreadable/in-progress session files.
       }
     }
   }
 
-  return buildPeriodUsage(messages, tokens, modelMap);
+  for (const file of rolloutCache.keys()) {
+    if (!activeFiles.has(file)) rolloutCache.delete(file);
+  }
+
+  return {
+    today: buildPeriodUsage(todayMessages, todayTokens, todayMap),
+    month: buildPeriodUsage(monthMessages, monthTokens, monthMap),
+  };
 }
 
 async function parseLatestRateLimits(): Promise<{ primary: WindowUsage; secondary: WindowUsage } | null> {
@@ -715,4 +805,8 @@ function createIdempotencyKey(): string {
 
 function desktopExecQuote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

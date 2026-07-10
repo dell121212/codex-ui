@@ -35,8 +35,8 @@ export default function ResetPanel({ banked }: Props) {
   const lifetimeUsed = banked?.lifetime_used ?? 0;
   const visibleSlots = hasAvailable ? Math.min(available, MAX_DOTS) : 0;
 
-  const handleReset = async () => {
-    if (loading) return;
+  const handleReset = () => {
+    if (loading || !hasAvailable) return;
     setShowConfirm(true);
   };
 
@@ -45,13 +45,16 @@ export default function ResetPanel({ banked }: Props) {
     setShowConfirm(false);
     setLoading(true);
     setFeedback(null);
-    const ok = await executeReset();
+    const outcome = await executeReset(banked?.credits[0]?.id);
     setLoading(false);
-    setFeedback(
-      ok
-        ? { ok: true,  msg: '5 小时窗口已重置' }
-        : { ok: false, msg: '重置失败，请在终端尝试 codex /reset' }
-    );
+    const result = {
+      reset: { ok: true, msg: '5 小时窗口已重置' },
+      alreadyRedeemed: { ok: true, msg: '这次重置已经生效' },
+      nothingToReset: { ok: false, msg: '当前窗口不符合重置条件' },
+      noCredit: { ok: false, msg: '账户没有可用重置次数' },
+      failed: { ok: false, msg: '重置请求失败，请稍后重试' },
+    }[outcome];
+    setFeedback(result);
     // Auto-clear feedback after 4 s
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     feedbackTimer.current = setTimeout(() => setFeedback(null), 4000);
@@ -73,7 +76,7 @@ export default function ResetPanel({ banked }: Props) {
           <div className="reset-subtitle">
             {hasAvailable
               ? `可用 ${available} 次 · 累计已用 ${lifetimeUsed} 次`
-              : '未识别到可用重置次数'}
+              : available === 0 ? `可用 0 次 · 累计已用 ${lifetimeUsed} 次` : '重置次数暂不可用'}
           </div>
           {lastReset && (
             <div className="reset-last">上次重置：{lastReset}</div>
@@ -83,10 +86,10 @@ export default function ResetPanel({ banked }: Props) {
         <button
           className="reset-btn"
           onClick={handleReset}
-          disabled={loading}
+          disabled={loading || !hasAvailable}
           aria-label={hasAvailable ? `重置 5 小时窗口，剩余 ${available} 次` : '尝试重置 5 小时窗口'}
         >
-          {loading ? '重置中…' : hasAvailable ? '重置窗口' : '尝试重置'}
+          {loading ? '重置中…' : hasAvailable ? '重置窗口' : '暂无额度'}
         </button>
       </div>
 
@@ -120,7 +123,7 @@ export default function ResetPanel({ banked }: Props) {
       )}
 
       {/* Dot indicator row */}
-      <div className="reset-dots" aria-label={hasAvailable ? `当前可用 ${available} 次` : '未识别到可用重置次数'}>
+      <div className="reset-dots" aria-label={hasAvailable ? `当前可用 ${available} 次` : '当前没有可用重置次数'}>
         {Array.from({ length: visibleSlots }).map((_, i) => (
           <div
             key={i}
@@ -132,7 +135,7 @@ export default function ResetPanel({ banked }: Props) {
           />
         ))}
         <span className="reset-dot-label">
-          {hasAvailable ? `${available} 次` : '未识别'}
+          {available == null ? '未知' : `${available} 次`}
         </span>
       </div>
 

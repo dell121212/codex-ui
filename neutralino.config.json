@@ -25,8 +25,12 @@
     "os.getPath",
     "os.showNotification",
     "os.setTray",
-    "storage.*",
-    "window.*"
+    "storage.getData",
+    "storage.setData",
+    "window.focus",
+    "window.hide",
+    "window.minimize",
+    "window.show"
   ],
   "modes": {
     "window": {
@@ -59,7 +63,7 @@
       "buildCommand": "npm run build",
       "buildPath": "/dist/"
     },
-    "binaryVersion": "nightly",
+    "binaryVersion": "6.5.0",
     "clientVersion": "6.8.0"
   }
 }

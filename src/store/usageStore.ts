@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AuthStatus, Settings, UsageSnapshot } from '../types';
+import type { AuthStatus, ResetOutcome, Settings, UsageSnapshot } from '../types';
 import {
   checkFirstLaunch,
   executeReset,
@@ -9,14 +9,13 @@ import {
   onUsageUpdated,
   refreshUsage,
   saveSettings,
-  testConnection,
 } from '../services/neutralinoBackend';
 
 // ─── Module-level listener (registered once, cleaned up on unlisten call) ───
 
 let _unlisten: (() => void) | null = null;
 
-function subscribe() {
+export function subscribe() {
   if (_unlisten) return;
   _unlisten = onUsageUpdated((snapshot) => {
     useStore.setState({
@@ -44,15 +43,14 @@ interface Store {
 
   fetchInitial: () => Promise<void>;
   refresh: () => Promise<void>;
-  executeReset: () => Promise<boolean>;
-  testConnection: (cookie: string) => Promise<boolean>;
+  executeReset: (creditId?: string) => Promise<ResetOutcome>;
   checkFirstLaunch: () => Promise<boolean>;
   getAuthStatus: () => Promise<AuthStatus>;
   loadSettings: () => Promise<Settings>;
   saveSettings: (s: Settings) => Promise<void>;
 }
 
-export const useStore = create<Store>((set, get) => ({
+export const useStore = create<Store>((set) => ({
   data: null,
   isRefreshing: false,
   lastUpdated: null,
@@ -96,17 +94,14 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  executeReset: async () => {
+  executeReset: async (creditId) => {
     try {
-      const ok = await executeReset();
-      if (ok) await get().refresh();
-      return ok;
+      const outcome = await executeReset(creditId);
+      return outcome;
     } catch {
-      return false;
+      return 'failed';
     }
   },
-
-  testConnection,
 
   checkFirstLaunch,
   getAuthStatus,
@@ -114,6 +109,3 @@ export const useStore = create<Store>((set, get) => ({
   loadSettings: () => loadSettings() as Promise<Settings>,
   saveSettings: saveSettings,
 }));
-
-// Call subscribe() once when the store module is imported
-subscribe();

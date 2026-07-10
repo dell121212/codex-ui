@@ -2,8 +2,17 @@ export interface WindowUsage {
   used: number;
   limit: number;
   percent: number;
+  window_duration_mins: number;
   reset_at_unix: number;
   remaining_secs: number;
+}
+
+export interface RateLimitBucket {
+  id: string;
+  name: string | null;
+  primary: WindowUsage;
+  secondary: WindowUsage;
+  plan_type: string | null;
 }
 
 export interface ModelUsage {
@@ -11,7 +20,7 @@ export interface ModelUsage {
   input_tokens: number;
   cached_input_tokens: number;
   output_tokens: number;
-  cost_usd: number;
+  cost_usd: number | null;
   percent_of_total: number;
 }
 
@@ -23,14 +32,28 @@ export interface PeriodUsage {
 
 export interface BankedResets {
   available: number | null;
+  credits: ResetCredit[];
   lifetime_used: number;
   last_reset_at: string | null;
 }
+
+export interface ResetCredit {
+  id: string;
+  status: string;
+  title: string | null;
+  description: string | null;
+  granted_at: number;
+  expires_at: number | null;
+}
+
+export type ResetOutcome = 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' | 'failed';
 
 export interface SpendInfo {
   month_total_usd: number;
   avg_daily_usd: number;
   projected_usd: number;
+  unpriced_models: string[];
+  pricing_as_of: string;
 }
 
 export interface UsageSnapshot {
@@ -38,6 +61,7 @@ export interface UsageSnapshot {
   provider: string;
   window_5h: WindowUsage;
   window_weekly: WindowUsage;
+  rate_limits: RateLimitBucket[];
   today_local: PeriodUsage;
   month_local: PeriodUsage;
   banked_resets: BankedResets;
@@ -48,14 +72,13 @@ export interface UsageSnapshot {
 }
 
 export interface Settings {
-  chatgpt_cookie?: string;
   refresh_interval_secs: number;
   autostart: boolean;
   notify_at_90_pct: boolean;
 }
 
 export interface AuthStatus {
-  source: 'codex' | 'cookie' | 'none';
+  source: 'codex' | 'none';
   account_id?: string;
   auth_path?: string;
   message: string;

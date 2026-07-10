@@ -22,7 +22,8 @@ ok()   { echo -e "${GREEN}✓${NC} $*"; }
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-APP_BIN="neutralino-dist/codex-ui/bin/neutralino-linux_x64"
+APP_BIN="$ROOT_DIR/neutralino-dist/codex-ui/bin/neutralino-linux_x64"
+SETUP_TRAY=false
 
 has_codex_auth() {
   node -e '
@@ -113,12 +114,12 @@ ensure_tray_support() {
         if gnome-extensions list --enabled 2>/dev/null | grep -Fxq "$zorin_ext"; then
           ok "Zorin AppIndicator 扩展已启用"
         else
-          warn "Zorin AppIndicator 扩展未启用，正在启用..."
-          if gnome-extensions enable "$zorin_ext" 2>/dev/null; then
+          warn "Zorin AppIndicator 扩展未启用。"
+          if [[ "$SETUP_TRAY" == true ]] && gnome-extensions enable "$zorin_ext" 2>/dev/null; then
             ok "Zorin AppIndicator 扩展已启用"
             [[ "$session" == "wayland" ]] && warn "Wayland 会话下扩展刚启用后可能需要注销/重登才完全生效。"
-          else
-            warn "无法自动启用 Zorin AppIndicator 扩展；托盘图标可能不可见。"
+          elif [[ "$SETUP_TRAY" == true ]]; then
+            warn "无法启用 Zorin AppIndicator 扩展；托盘图标可能不可见。"
           fi
         fi
       else
@@ -133,7 +134,9 @@ ensure_tray_support() {
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     warn "缺少托盘支持组件：${missing[*]}"
-    if sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}"; then
+    if [[ "$SETUP_TRAY" != true ]]; then
+      info "如需自动安装，请显式运行：./run.sh --setup-tray"
+    elif sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}"; then
       ok "托盘支持组件已安装"
       [[ "$session" == "wayland" ]] && warn "Wayland 会话下新安装的 Shell 扩展可能需要注销/重登才生效。"
     else
@@ -172,12 +175,18 @@ ensure_codex_login() {
 }
 
 clear_old_app_processes() {
-  local pids
-  pids="$(pgrep -f 'neutralino-linux_x64|codex-ui/bin/neutralino' || true)"
-  if [[ -n "$pids" ]]; then
+  local proc target pid
+  local pids=()
+  for proc in /proc/[0-9]*/exe; do
+    target="$(readlink -f "$proc" 2>/dev/null || true)"
+    if [[ "$target" == "$APP_BIN" ]]; then
+      pid="${proc#/proc/}"
+      pids+=("${pid%/exe}")
+    fi
+  done
+  if [[ ${#pids[@]} -gt 0 ]]; then
     warn "检测到旧的 codex-ui/Neutralino 进程，正在关闭..."
-    # shellcheck disable=SC2086
-    kill $pids || true
+    kill "${pids[@]}" || true
     sleep 0.5
   fi
 }
@@ -190,16 +199,19 @@ build_app() {
 }
 
 run_app() {
-  build_app
   clear_old_app_processes
+  build_app
   log "启动应用..."
   "$APP_BIN"
 }
 
 print_header
-if [[ "$#" -gt 0 ]]; then
-  warn "run.sh 不需要参数，已忽略：$*"
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --setup-tray) SETUP_TRAY=true ;;
+    *) err "未知参数：$arg。支持的参数：--setup-tray" ;;
+  esac
+done
 ensure_node
 ensure_npm_deps
 ensure_neutralino_runtime

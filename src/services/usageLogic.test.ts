@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPeriodUsage,
+  computeSpend,
   enrichWithCosts,
   parseCodexUsage,
   parseLocalLimitWindow,
@@ -124,11 +125,50 @@ describe('remote usage response parsing', () => {
         secondary: { usedPercent: 5, resetsAt: resetAt + 3600 },
         credits: { hasCredits: true, unlimited: false, balance: 99 },
       },
-      rateLimitResetCredits: { availableCount: 3 },
+      rateLimitResetCredits: {
+        availableCount: 3,
+        credits: [{
+          id: 'credit-1',
+          status: 'available',
+          grantedAt: resetAt - 60,
+          expiresAt: resetAt + 86_400,
+          title: 'Weekly reset',
+          description: null,
+        }],
+      },
     });
 
     expect(parsed?.window_5h.percent).toBe(28);
     expect(parsed?.banked_resets.available).toBe(3);
+    expect(parsed?.banked_resets.credits[0]).toMatchObject({ id: 'credit-1', status: 'available' });
+  });
+
+  it('keeps every independent model quota returned by app-server', () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 60;
+    const parsed = parseCodexUsage({
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: 'codex',
+          primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: resetAt },
+          secondary: { usedPercent: 4, windowDurationMins: 10080, resetsAt: resetAt + 3600 },
+        },
+        'codex-mini-latest': {
+          limitId: 'codex-mini-latest',
+          limitName: 'Codex Mini',
+          primary: { usedPercent: 65, windowDurationMins: 300, resetsAt: resetAt },
+          secondary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: resetAt + 3600 },
+        },
+      },
+      rateLimitResetCredits: { availableCount: 2, credits: [] },
+    });
+
+    expect(parsed?.rate_limits).toHaveLength(2);
+    expect(parsed?.rate_limits[1]).toMatchObject({
+      id: 'codex-mini-latest',
+      name: 'Codex Mini',
+      primary: { percent: 65, window_duration_mins: 300 },
+    });
+    expect(parsed?.banked_resets.available).toBe(2);
   });
 
   it('parses legacy wham grants and flat usage shapes', () => {
@@ -157,8 +197,8 @@ describe('remote usage response parsing', () => {
   });
 });
 
-describe('cost enrichment', () => {
-  it('discounts cached input using GPT-5 prices', () => {
+describe('API-equivalent cost estimation', () => {
+  it('uses current GPT-5 cached-input pricing', () => {
     const usage: PeriodUsage = {
       messages: 1,
       tokens: 1_100_000,
@@ -167,14 +207,37 @@ describe('cost enrichment', () => {
         input_tokens: 1_000_000,
         cached_input_tokens: 900_000,
         output_tokens: 100_000,
-        cost_usd: 0,
-        percent_of_total: 0,
+        cost_usd: null,
+        percent_of_total: 100,
       }],
     };
 
     const enriched = enrichWithCosts(usage);
 
-    expect(enriched.models[0].cost_usd).toBe(8.85);
-    expect(enriched.models[0].percent_of_total).toBe(100);
+    expect(enriched.models[0].cost_usd).toBe(1.2375);
+    expect(computeSpend(enriched, new Date(2026, 6, 10))).toMatchObject({
+      month_total_usd: 1.24,
+      unpriced_models: [],
+      pricing_as_of: '2026-07-10',
+    });
+  });
+
+  it('does not silently assign a price to an unknown model', () => {
+    const usage: PeriodUsage = {
+      messages: 1,
+      tokens: 10,
+      models: [{
+        model: 'future-codex-model',
+        input_tokens: 8,
+        cached_input_tokens: 0,
+        output_tokens: 2,
+        cost_usd: null,
+        percent_of_total: 100,
+      }],
+    };
+
+    const enriched = enrichWithCosts(usage);
+    expect(enriched.models[0].cost_usd).toBeNull();
+    expect(computeSpend(enriched).unpriced_models).toEqual(['future-codex-model']);
   });
 });

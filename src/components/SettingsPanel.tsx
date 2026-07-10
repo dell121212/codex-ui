@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Eye, EyeOff, CheckCircle, XCircle, Loader, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, Loader, RefreshCw } from 'lucide-react';
 import { useStore } from '../store/usageStore';
 import type { AuthStatus, Settings } from '../types';
 
@@ -14,8 +14,6 @@ const INTERVALS = [
   { label: '5 分钟',  value: 300 },
 ];
 
-type TestState = 'idle' | 'testing' | 'ok' | 'fail';
-
 function Toggle({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <label className="toggle" aria-label="开关">
@@ -27,17 +25,14 @@ function Toggle({ value, onChange, disabled = false }: { value: boolean; onChang
 }
 
 export default function SettingsPanel({ onClose }: Props) {
-  const { loadSettings, saveSettings, testConnection, getAuthStatus } = useStore();
+  const { loadSettings, saveSettings, getAuthStatus } = useStore();
   const [cfg, setCfg] = useState<Settings>({
-    chatgpt_cookie: '',
     refresh_interval_secs: 60,
     autostart: false,
     notify_at_90_pct: true,
   });
-  const [showCookie, setShowCookie] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(false);
-  const [testState, setTestState] = useState<TestState>('idle');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -51,28 +46,15 @@ export default function SettingsPanel({ onClose }: Props) {
   }, [getAuthStatus]);
 
   useEffect(() => {
-    loadSettings().then(s =>
-      setCfg({ ...s, chatgpt_cookie: s.chatgpt_cookie ?? '' })
-    );
+    loadSettings().then(setCfg);
     void refreshAuthStatus();
   }, [loadSettings, refreshAuthStatus]);
-
-  const handleTest = useCallback(async () => {
-    if (!cfg.chatgpt_cookie) return;
-    setTestState('testing');
-    const ok = await testConnection(cfg.chatgpt_cookie);
-    setTestState(ok ? 'ok' : 'fail');
-    setTimeout(() => setTestState('idle'), 4000);
-  }, [cfg.chatgpt_cookie, testConnection]);
 
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await saveSettings({
-        ...cfg,
-        chatgpt_cookie: cfg.chatgpt_cookie || undefined,
-      });
+      await saveSettings(cfg);
       await refreshAuthStatus();
       onClose();
     } catch (e) {
@@ -82,16 +64,7 @@ export default function SettingsPanel({ onClose }: Props) {
     }
   };
 
-  const testIcon = {
-    idle:    null,
-    testing: <Loader size={12} style={{ animation: 'spin 0.8s linear infinite' }} />,
-    ok:      <CheckCircle size={12} color="#30d158" />,
-    fail:    <XCircle size={12} color="#ff453a" />,
-  }[testState];
-
-  const testLabel = { idle: '测试连接', testing: '测试中…', ok: '已连接 ✓', fail: '连接失败 ✗' }[testState];
   const authOk = authStatus?.source === 'codex';
-  const authWarn = authStatus?.source === 'cookie';
 
   return (
     <div className="settings-panel">
@@ -108,13 +81,11 @@ export default function SettingsPanel({ onClose }: Props) {
         {/* Auth section */}
         <div className="settings-section">
           <div className="settings-section-label">登录态</div>
-          <div className={`auth-status ${authOk ? 'auth-status--ok' : authWarn ? 'auth-status--warn' : 'auth-status--fail'}`}>
+          <div className={`auth-status ${authOk ? 'auth-status--ok' : 'auth-status--fail'}`}>
             <div className="auth-status-main">
               {checkingAuth ? (
                 <Loader size={13} style={{ animation: 'spin 0.8s linear infinite' }} />
               ) : authOk ? (
-                <CheckCircle size={13} />
-              ) : authWarn ? (
                 <CheckCircle size={13} />
               ) : (
                 <XCircle size={13} />
@@ -135,45 +106,6 @@ export default function SettingsPanel({ onClose }: Props) {
           </button>
           <div className="settings-hint">
             程序会在启动和刷新时自动读取 Codex CLI token。未登录时，在终端运行 codex login 后点重新检测。
-          </div>
-        </div>
-
-        {/* Cookie section */}
-        <div className="settings-section">
-          <div className="settings-section-label">备用 Cookie</div>
-          <div className="settings-hint">
-            仅当 Codex 登录态不可用时使用；正常情况下这里可以留空。
-          </div>
-          <div className="settings-cookie-row">
-            <textarea
-              className="settings-textarea"
-              value={cfg.chatgpt_cookie ?? ''}
-              onChange={e => setCfg(c => ({ ...c, chatgpt_cookie: e.target.value }))}
-              placeholder="备用：粘贴 __Secure-next-auth.session-token…"
-              rows={3}
-              spellCheck={false}
-              style={{ fontFamily: 'monospace', fontSize: 10 }}
-              data-type={showCookie ? 'text' : 'password'}
-            />
-            <button
-              className="icon-btn"
-              onClick={() => setShowCookie(v => !v)}
-              aria-label={showCookie ? '隐藏 Cookie' : '显示 Cookie'}
-              style={{ alignSelf: 'flex-start', marginTop: 2 }}
-            >
-              {showCookie ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
-          </div>
-          <button
-            className="test-btn"
-            onClick={handleTest}
-            disabled={!cfg.chatgpt_cookie || testState === 'testing'}
-          >
-            {testIcon && <span className="test-icon">{testIcon}</span>}
-            {testLabel}
-          </button>
-          <div className="settings-hint">
-            Cookie 获取方式：chatgpt.com → F12 → Application → Cookies
           </div>
         </div>
 

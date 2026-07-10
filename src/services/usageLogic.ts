@@ -1,4 +1,12 @@
-import type { ModelUsage, PeriodUsage, SpendInfo, UsageSnapshot, WindowUsage } from '../types';
+import type {
+  ModelUsage,
+  PeriodUsage,
+  RateLimitBucket,
+  ResetCredit,
+  SpendInfo,
+  UsageSnapshot,
+  WindowUsage,
+} from '../types';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -6,47 +14,66 @@ export const EMPTY_WINDOW: WindowUsage = {
   used: 0,
   limit: 0,
   percent: 0,
+  window_duration_mins: 0,
   reset_at_unix: 0,
   remaining_secs: 0,
 };
 
 export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
 
-export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> | null {
+export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> | null {
   const data = record(raw);
-  const limits =
-    array(data.rateLimits) ??
-    array(data.rate_limits) ??
-    values(data.rateLimitsByLimitId) ??
-    values(data.rate_limits_by_limit_id) ??
-    singleRecord(data.rateLimits) ??
-    singleRecord(data.rate_limits);
-  if (!limits?.length) return null;
+  const entries = rateLimitEntries(data);
+  const rate_limits = entries
+    .map(([id, value]) => parseRateLimitBucket(value, id))
+    .filter((bucket): bucket is RateLimitBucket => bucket !== null);
+  if (!rate_limits.length) return null;
 
-  const best = limits.find((limit) => {
-    const item = record(limit);
-    return String(item.limitId ?? item.limit_id ?? '').toLowerCase() === 'codex';
-  }) ?? limits[0];
-  const bestRecord = record(best);
+  const best = rate_limits.find((limit) => limit.id.toLowerCase() === 'codex') ?? rate_limits[0];
+  const resetSummary = parseResetCreditsSummary(
+    data.rateLimitResetCredits ?? data.rate_limit_reset_credits,
+  );
   return {
-    window_5h: parseRateLimitWindow(bestRecord.primary) ?? { ...EMPTY_WINDOW },
-    window_weekly: parseRateLimitWindow(bestRecord.secondary) ?? { ...EMPTY_WINDOW },
+    window_5h: best.primary,
+    window_weekly: best.secondary,
+    rate_limits,
     banked_resets: {
-      available: parseResetCredits(data.rateLimitResetCredits ?? data.rate_limit_reset_credits),
+      available: resetSummary.available,
+      credits: resetSummary.credits,
       lifetime_used: 0,
       last_reset_at: null,
     },
   };
 }
 
+export function parseRateLimitBucket(raw: unknown, fallbackId = ''): RateLimitBucket | null {
+  const data = record(raw);
+  const primary = parseRateLimitWindow(data.primary);
+  const secondary = parseRateLimitWindow(data.secondary);
+  if (!primary && !secondary) return null;
+
+  const id = String(data.limitId ?? data.limit_id ?? fallbackId).trim() || 'codex';
+  const rawName = data.limitName ?? data.limit_name;
+  const rawPlan = data.planType ?? data.plan_type;
+  return {
+    id,
+    name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : null,
+    primary: primary ?? { ...EMPTY_WINDOW },
+    secondary: secondary ?? { ...EMPTY_WINDOW },
+    plan_type: typeof rawPlan === 'string' && rawPlan.trim() ? rawPlan.trim() : null,
+  };
+}
+
 export function parseRateLimitWindow(raw: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
   const percent = numberField(raw, ['usedPercent', 'used_percent']);
-  const resetAt = timestampField(raw, ['resetsAt', 'resets_at']);
-  if (percent === null || resetAt === null) return null;
+  if (percent === null) return null;
+  const resetAt = timestampField(raw, ['resetsAt', 'resets_at']) ?? 0;
+  const windowDuration = numberField(raw, ['windowDurationMins', 'window_duration_mins', 'window_minutes']) ?? 0;
   return {
     used: Math.round(percent),
     limit: 100,
     percent: clamp(percent, 0, 100),
+    window_duration_mins: Math.max(0, windowDuration),
     reset_at_unix: resetAt,
     remaining_secs: Math.max(0, resetAt - nowUnix),
   };
@@ -65,7 +92,34 @@ export function parseResetCredits(raw: unknown): number | null {
   return count === null ? null : Math.max(0, Math.floor(count));
 }
 
-export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'banked_resets'> {
+export function parseResetCreditsSummary(raw: unknown): { available: number | null; credits: ResetCredit[] } {
+  const data = record(raw);
+  const details = array(data.credits) ?? [];
+  return {
+    available: parseResetCredits(raw),
+    credits: details.map(parseResetCredit).filter((credit): credit is ResetCredit => credit !== null),
+  };
+}
+
+function parseResetCredit(raw: unknown): ResetCredit | null {
+  const data = record(raw);
+  const id = typeof data.id === 'string' ? data.id.trim() : '';
+  if (!id) return null;
+  const title = typeof data.title === 'string' && data.title.trim() ? data.title.trim() : null;
+  const description = typeof data.description === 'string' && data.description.trim()
+    ? data.description.trim()
+    : null;
+  return {
+    id,
+    status: String(data.status ?? 'unknown'),
+    title,
+    description,
+    granted_at: timestampField(raw, ['grantedAt', 'granted_at']) ?? 0,
+    expires_at: timestampField(raw, ['expiresAt', 'expires_at']),
+  };
+}
+
+export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> {
   const data = record(raw);
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
   let window_weekly: WindowUsage = { ...EMPTY_WINDOW };
@@ -85,12 +139,21 @@ export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h'
   if (flat.plus_5h || flat.pro_5h) window_5h = fillWindowFromGrant(flat.plus_5h ?? flat.pro_5h);
   if (flat.plus_weekly || flat.pro_weekly) window_weekly = fillWindowFromGrant(flat.plus_weekly ?? flat.pro_weekly);
   const resetCredits = parseResetCredits(data.rateLimitResetCredits ?? data.rate_limit_reset_credits);
+  const rate_limits: RateLimitBucket[] = [{
+    id: 'codex',
+    name: null,
+    primary: window_5h,
+    secondary: window_weekly,
+    plan_type: null,
+  }];
 
   return {
     window_5h,
     window_weekly,
+    rate_limits,
     banked_resets: {
       available: resetCredits,
+      credits: [],
       lifetime_used: 0,
       last_reset_at: null,
     },
@@ -107,6 +170,7 @@ export function fillWindowFromGrant(grant: unknown, nowUnix = Math.floor(Date.no
     used,
     limit,
     percent,
+    window_duration_mins: numberField(grant, ['windowDurationMins', 'window_duration_mins', 'window_minutes']) ?? 0,
     reset_at_unix: resetAt,
     remaining_secs: Math.max(0, resetAt - nowUnix),
   };
@@ -173,11 +237,12 @@ export function parseLocalLimitWindow(raw: unknown, nowUnix = Math.floor(Date.no
   if (resetAt > 0 && resetAt <= nowUnix && windowMinutes > 0) {
     const windowSecs = windowMinutes * 60;
     resetAt = resetAt + (Math.floor((nowUnix - resetAt) / windowSecs) + 1) * windowSecs;
-    return {
+      return {
       used: 0,
       limit: 100,
-      percent: 0,
-      reset_at_unix: resetAt,
+        percent: 0,
+        window_duration_mins: Math.max(0, windowMinutes),
+        reset_at_unix: resetAt,
       remaining_secs: Math.max(0, resetAt - nowUnix),
     };
   }
@@ -185,6 +250,7 @@ export function parseLocalLimitWindow(raw: unknown, nowUnix = Math.floor(Date.no
     used: Math.round(percent),
     limit: 100,
     percent: clamp(percent, 0, 100),
+    window_duration_mins: Math.max(0, windowMinutes),
     reset_at_unix: resetAt,
     remaining_secs: Math.max(0, resetAt - nowUnix),
   };
@@ -198,7 +264,7 @@ export function buildPeriodUsage(messages: number, tokens: number, modelMap: Mod
       input_tokens: usage.input,
       cached_input_tokens: usage.cached,
       output_tokens: usage.output,
-      cost_usd: 0,
+      cost_usd: null,
       percent_of_total: ((usage.input + usage.output) / denominator) * 100,
     }))
     .sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens));
@@ -219,63 +285,60 @@ export function mergeModelMap(target: ModelTokenMap, source: ModelTokenMap) {
   }
 }
 
-const PRICES: Array<{ prefix: string; input: number; cached: number; output: number }> = [
-  { prefix: 'gpt-5-mini', input: 0.4, cached: 0.04, output: 1.6 },
-  { prefix: 'gpt-5', input: 15, cached: 1.5, output: 60 },
-  { prefix: 'gpt-4.1-nano', input: 0.1, cached: 0.01, output: 0.4 },
-  { prefix: 'gpt-4.1-mini', input: 0.4, cached: 0.04, output: 1.6 },
-  { prefix: 'gpt-4.1', input: 2, cached: 0.2, output: 8 },
-  { prefix: 'gpt-4o-mini', input: 0.15, cached: 0.015, output: 0.6 },
-  { prefix: 'gpt-4o', input: 2.5, cached: 0.25, output: 10 },
-  { prefix: 'o4-mini', input: 1.1, cached: 0.11, output: 4.4 },
-  { prefix: 'o3-mini', input: 1.1, cached: 0.11, output: 4.4 },
-  { prefix: 'o3', input: 10, cached: 1, output: 40 },
-  { prefix: 'o1-mini', input: 1.1, cached: 0.11, output: 4.4 },
-  { prefix: 'o1', input: 15, cached: 1.5, output: 60 },
-  { prefix: 'claude-opus', input: 15, cached: 1.5, output: 75 },
-  { prefix: 'claude-sonnet', input: 3, cached: 0.3, output: 15 },
-  { prefix: 'claude-haiku', input: 0.8, cached: 0.08, output: 4 },
-  { prefix: 'gemini-2.5-pro', input: 1.25, cached: 0.125, output: 10 },
-  { prefix: 'gemini-2.5-flash', input: 0.075, cached: 0.0075, output: 0.3 },
-  { prefix: 'gemini-2.0', input: 0.1, cached: 0.01, output: 0.4 },
-  { prefix: 'gemini', input: 0.1, cached: 0.01, output: 0.4 },
+const PRICING_AS_OF = '2026-07-10';
+
+// Standard API-equivalent text-token prices in USD per 1M tokens.
+const PRICES: Array<{ id: string; input: number; cached: number; output: number }> = [
+  { id: 'gpt-5.3-codex', input: 1.75, cached: 0.175, output: 14 },
+  { id: 'gpt-5.2-codex', input: 1.75, cached: 0.175, output: 14 },
+  { id: 'gpt-5.1-codex', input: 1.25, cached: 0.125, output: 10 },
+  { id: 'gpt-5-codex', input: 1.25, cached: 0.125, output: 10 },
+  { id: 'codex-mini-latest', input: 1.5, cached: 0.375, output: 6 },
+  { id: 'gpt-5.5', input: 5, cached: 0.5, output: 30 },
+  { id: 'gpt-5.4-mini', input: 0.75, cached: 0.075, output: 4.5 },
+  { id: 'gpt-5.4-nano', input: 0.2, cached: 0.02, output: 1.25 },
+  { id: 'gpt-5.4', input: 2.5, cached: 0.25, output: 15 },
+  { id: 'gpt-5', input: 1.25, cached: 0.125, output: 10 },
+  { id: 'gpt-4.1-nano', input: 0.1, cached: 0.025, output: 0.4 },
+  { id: 'gpt-4.1-mini', input: 0.4, cached: 0.1, output: 1.6 },
+  { id: 'gpt-4.1', input: 2, cached: 0.5, output: 8 },
 ];
 
 export function enrichWithCosts(usage: PeriodUsage): PeriodUsage {
-  const models = usage.models.map((model) => {
-    const price = priceFor(model.model);
-    const cached = Math.min(model.cached_input_tokens, model.input_tokens);
-    const uncached = model.input_tokens - cached;
-    const cost = uncached * price.input / 1_000_000 + cached * price.cached / 1_000_000 + model.output_tokens * price.output / 1_000_000;
-    return { ...model, cost_usd: round(cost, 4) };
-  });
-
-  const total = models.reduce((sum, model) => sum + model.input_tokens + model.output_tokens, 0);
   return {
     ...usage,
-    models: models.map((model) => ({
-      ...model,
-      percent_of_total: total > 0 ? ((model.input_tokens + model.output_tokens) / total) * 100 : 0,
-    })),
+    models: usage.models.map((model) => {
+      const price = priceFor(model.model);
+      if (!price) return { ...model, cost_usd: null };
+      const cached = Math.min(model.cached_input_tokens, model.input_tokens);
+      const uncached = model.input_tokens - cached;
+      const cost = uncached * price.input / 1_000_000
+        + cached * price.cached / 1_000_000
+        + model.output_tokens * price.output / 1_000_000;
+      return { ...model, cost_usd: round(cost, 4) };
+    }),
   };
 }
 
 export function computeSpend(month: PeriodUsage, now = new Date()): SpendInfo {
-  const total = month.models.reduce((sum, model) => sum + model.cost_usd, 0);
-  const day = now.getDate();
+  const priced = month.models.filter((model) => model.cost_usd !== null);
+  const total = priced.reduce((sum, model) => sum + (model.cost_usd ?? 0), 0);
+  const day = Math.max(now.getDate(), 1);
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const avg = day > 0 ? total / day : 0;
   return {
     month_total_usd: round(total, 2),
-    avg_daily_usd: round(avg, 2),
-    projected_usd: round(avg * daysInMonth, 2),
+    avg_daily_usd: round(total / day, 2),
+    projected_usd: round((total / day) * daysInMonth, 2),
+    unpriced_models: month.models.filter((model) => model.cost_usd === null).map((model) => model.model),
+    pricing_as_of: PRICING_AS_OF,
   };
 }
 
 export function priceFor(model: string) {
-  const lower = model.toLowerCase();
-  return PRICES.find((price) => lower.startsWith(price.prefix) || lower.includes(price.prefix)) ?? { input: 2.5, cached: 0.25, output: 10 };
+  const normalized = model.toLowerCase().trim();
+  return PRICES.find(({ id }) => normalized === id || normalized.startsWith(`${id}-20`)) ?? null;
 }
+
 
 export function parseJson(line: string): unknown | null {
   const trimmed = line.trim();
@@ -320,13 +383,16 @@ export function array(value: unknown): unknown[] | null {
   return Array.isArray(value) ? value : null;
 }
 
-function values(value: unknown): unknown[] | null {
-  const data = value !== null && typeof value === 'object' ? value as UnknownRecord : null;
-  return data ? Object.values(data) : null;
-}
+function rateLimitEntries(data: UnknownRecord): Array<[string, unknown]> {
+  const byId = data.rateLimitsByLimitId ?? data.rate_limits_by_limit_id;
+  if (byId !== null && typeof byId === 'object' && !Array.isArray(byId)) {
+    const entries = Object.entries(byId as UnknownRecord);
+    if (entries.length) return entries;
+  }
 
-function singleRecord(value: unknown): unknown[] | null {
-  return value !== null && typeof value === 'object' ? [value] : null;
+  const legacy = data.rateLimits ?? data.rate_limits;
+  if (Array.isArray(legacy)) return legacy.map((value) => ['', value]);
+  return legacy !== null && typeof legacy === 'object' ? [['', legacy]] : [];
 }
 
 function record(value: unknown): UnknownRecord {

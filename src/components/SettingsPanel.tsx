@@ -25,7 +25,7 @@ function Toggle({ value, onChange, disabled = false }: { value: boolean; onChang
 }
 
 export default function SettingsPanel({ onClose }: Props) {
-  const { loadSettings, saveSettings, getAuthStatus } = useStore();
+  const { loadSettings, saveSettings, getAuthStatus, refresh } = useStore();
   const [cfg, setCfg] = useState<Settings>({
     refresh_interval_secs: 60,
     autostart: false,
@@ -39,11 +39,17 @@ export default function SettingsPanel({ onClose }: Props) {
   const refreshAuthStatus = useCallback(async () => {
     setCheckingAuth(true);
     try {
-      setAuthStatus(await getAuthStatus());
+      const status = await getAuthStatus();
+      setAuthStatus(status);
+
+      // The banner is driven by the global usage snapshot, not this panel's
+      // local auth status. Refresh that snapshot as part of rechecking auth so
+      // a successful login clears a stale COOKIE_EXPIRED/NO_AUTH error.
+      await refresh();
     } finally {
       setCheckingAuth(false);
     }
-  }, [getAuthStatus]);
+  }, [getAuthStatus, refresh]);
 
   useEffect(() => {
     loadSettings().then(setCfg);

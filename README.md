@@ -1,7 +1,7 @@
 # codex-ui
 
 <p align="center">
-  <img src="./docs/images/hero.jpg" alt="codex-ui hero" width="900" />
+  <img src="./docs/images/hero.png" alt="codex-ui — Linux tray AI quota dashboard" width="900" />
 </p>
 
 <p align="center">
@@ -27,15 +27,21 @@ Built with **Neutralino + React + TypeScript**.
 
 ## Screenshots
 
-<p align="center">
-  <img src="./docs/images/dashboard.png" alt="Usage dashboard mock" width="320" />
-  &nbsp;
-  <img src="./docs/images/features.jpg" alt="Feature cards" width="480" />
-</p>
+Real product UI (dark Apple-style panel used by the app):
 
 <p align="center">
-  <img src="./docs/images/promo-square.jpg" alt="codex-ui promo" width="360" />
+  <img src="./docs/images/dashboard.png" alt="OpenAI Codex 5h / 7d usage" width="280" />
+  &nbsp;
+  <img src="./docs/images/grok.png" alt="Grok official weekly and monthly billing" width="280" />
+  &nbsp;
+  <img src="./docs/images/picker.png" alt="Company picker with usage-first ranking" width="280" />
 </p>
+
+| | |
+|---|---|
+| **OpenAI** | 5h ring + 7d bar, local token burn, model ranking |
+| **Grok** | Official weekly credits + monthly units (`cli-chat-proxy` billing — not context window) |
+| **Companies** | Foldable picker; providers with usage pin to the top |
 
 ## Features
 
@@ -43,10 +49,10 @@ Built with **Neutralino + React + TypeScript**.
 |------|----------------|
 | **Multi-company strip** | OpenAI, Anthropic, xAI Grok, Mistral, Kimi, GLM — foldable picker; companies with captured usage pin to the top |
 | **OpenAI Codex** | Live 5h / 7d windows via Codex app-server or WHAM, reset credits, model spend estimate |
-| **Grok** | Official `cli-chat-proxy` billing: weekly credits + Build/Chat split + monthly credit units (not context-window size) |
+| **Grok** | Official billing: weekly credits + Build/Chat split + monthly credit units |
 | **Mistral Vibe** | Monthly token view + rate-limit headers when available; free tier shows local calendar-month burn when no month cap |
 | **Heat meters** | Continuous **blue → red** progress (low = blue, high = red) |
-| **Fast open** | Disk **stale-while-revalidate** cache: paint last snapshot immediately, refresh in the background; Codex / Grok / Mistral remotes load in parallel |
+| **Fast open** | Disk **stale-while-revalidate** cache: paint last snapshot immediately, refresh in the background; remotes load in parallel |
 | **Local first** | Reads `~/.codex`, `~/.grok`, `~/.vibe` session/auth files automatically |
 | **Linux tray** | Autostart from settings; Zorin / Wayland keeps a taskbar entry when tray is flaky |
 
@@ -114,7 +120,7 @@ src/
   components/     # Popover UI (companies, rings, Grok/Mistral panels)
   services/       # usage parsing, local providers, Neutralino backend
   store/          # Zustand usage state
-docs/images/      # README promo assets
+docs/images/      # README screenshots (HTML mocks → PNG)
 ```
 
 ## Privacy & system impact
@@ -122,7 +128,6 @@ docs/images/      # README promo assets
 - Quota cache is stored locally (Neutralino storage / small JSON).
 - Does not install drivers or change system networking.
 - Optional autostart only if you enable it in Settings.
-- Promo images under `docs/images/` are marketing assets, not runtime data.
 
 ## License / status
 

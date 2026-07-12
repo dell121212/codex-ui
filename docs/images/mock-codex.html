@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>codex-ui · OpenAI</title>
+<style>
+:root {
+  --bg0:#000; --bg1:#1c1c1e; --bg2:#2c2c2e; --bg3:#3a3a3c;
+  --sep:rgba(84,84,88,.65); --sep-soft:rgba(255,255,255,.06);
+  --t1:#f5f5f7; --t2:rgba(235,235,245,.78); --t3:rgba(235,235,245,.48);
+  --blue:#0a84ff; --red:#ff453a; --purple:#5e5ce6; --green:#30d158; --orange:#ff9f0a;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body {
+  font-family:var(--font); background:#111; color:var(--t1); font-size:13px;
+  display:flex; align-items:center; justify-content:center; min-height:100vh; padding:32px;
+  -webkit-font-smoothing:antialiased;
+}
+.shell {
+  width:380px; background:var(--bg0); border-radius:14px; overflow:hidden;
+  border:0.5px solid var(--sep-soft);
+  box-shadow:0 20px 50px rgba(0,0,0,.55);
+}
+.header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px 12px;
+  background:linear-gradient(180deg,rgba(28,28,30,.96),rgba(28,28,30,.88));
+  border-bottom:0.5px solid var(--sep-soft);
+}
+.header-title { font-weight:600; font-size:15px; letter-spacing:-.2px; }
+.header-acts { display:flex; gap:6px; }
+.icon-btn {
+  width:28px; height:28px; border-radius:8px; border:0.5px solid var(--sep);
+  background:var(--bg2); color:var(--t2); display:grid; place-items:center; font-size:12px;
+}
+.chrome { padding:10px 12px 0; }
+.company {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:var(--bg1); border:0.5px solid var(--sep-soft); border-radius:12px;
+}
+.dot { width:9px; height:9px; border-radius:50%; background:#10a37f; }
+.cname { font-weight:600; font-size:13px; }
+.csub { font-size:11px; color:var(--t3); margin-top:1px; }
+.tag {
+  margin-left:auto; font-size:11px; font-weight:600; color:var(--blue);
+  background:rgba(10,132,255,.14); padding:3px 8px; border-radius:999px;
+}
+.chev { color:var(--t3); font-size:11px; margin-left:4px; }
+.body { padding:12px; display:flex; flex-direction:column; gap:10px; }
+.card {
+  background:var(--bg1); border:0.5px solid var(--sep-soft); border-radius:14px; padding:14px;
+}
+.label {
+  font-size:11px; font-weight:600; color:var(--t3); letter-spacing:.3px; margin-bottom:8px;
+}
+.ring-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.ring-pct { font-size:28px; font-weight:700; letter-spacing:-.8px; }
+.ring-sub { font-size:11px; color:var(--t3); }
+.countdown { font-size:12px; color:var(--t2); }
+.stats { margin-top:6px; }
+.stat { display:flex; justify-content:space-between; padding:3px 0; font-size:12px; }
+.stat span:first-child { color:var(--t3); }
+.stat span:last-child { font-weight:600; font-variant-numeric:tabular-nums; }
+.weekly-head { display:flex; justify-content:space-between; align-items:baseline; }
+.weekly-pct { font-size:18px; font-weight:700; letter-spacing:-.4px; }
+.bar {
+  height:7px; border-radius:999px; background:rgba(120,120,128,.28); overflow:hidden; margin:10px 0 8px;
+}
+.fill { height:100%; border-radius:999px; }
+.fill-42 { width:42%; background:rgb(113,105,172); } /* heat ~42% blue→red */
+.fill-67 { width:67%; background:rgb(174,89,123); }
+.metrics { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.amount { font-size:22px; font-weight:700; letter-spacing:-.6px; margin:4px 0 2px; }
+.period { font-size:11px; color:var(--t3); }
+.section { font-size:12px; font-weight:600; color:var(--t3); margin:2px 0 0; }
+.model { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.mname { width:96px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mbar { flex:1; height:5px; border-radius:999px; background:rgba(120,120,128,.28); overflow:hidden; }
+.mfill { height:100%; border-radius:999px; }
+.mtok { width:40px; text-align:right; font-size:11px; color:var(--t3); font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="header">
+    <div class="header-title">codex-ui</div>
+    <div class="header-acts">
+      <div class="icon-btn">↻</div>
+      <div class="icon-btn">−</div>
+      <div class="icon-btn">✕</div>
+    </div>
+  </div>
+  <div class="chrome">
+    <div class="company">
+      <div class="dot"></div>
+      <div>
+        <div class="cname">OpenAI</div>
+        <div class="csub">Codex</div>
+      </div>
+      <div class="tag">42%</div>
+      <div class="chev">▾</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="card">
+      <div class="label">5 小时</div>
+      <div class="ring-wrap">
+        <svg width="100" height="100" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(120,120,128,.32)" stroke-width="8"/>
+          <circle cx="50" cy="50" r="40" fill="none" stroke="rgb(113,105,172)" stroke-width="8"
+            stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="145.8"
+            transform="rotate(-90 50 50)"/>
+        </svg>
+        <div class="ring-pct">42%</div>
+        <div class="ring-sub">已用</div>
+        <div class="countdown">2小时 18分钟后重置</div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span>已用</span><span>12.4k</span></div>
+        <div class="stat"><span>上限</span><span>29.5k</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="weekly-head">
+        <div class="label" style="margin:0">7 天</div>
+        <div class="weekly-pct">67%</div>
+      </div>
+      <div class="bar"><div class="fill fill-67"></div></div>
+      <div class="stat"><span>已用</span><span>84.2k</span></div>
+      <div class="stat"><span>剩余</span><span>41.5k</span></div>
+      <div class="stat"><span>重置</span><span>3天 6小时</span></div>
+    </div>
+
+    <div class="metrics">
+      <div class="card">
+        <div class="label">今日</div>
+        <div class="amount">~8.2k</div>
+        <div class="period">Token</div>
+      </div>
+      <div class="card">
+        <div class="label">估价</div>
+        <div class="amount">~$1.24</div>
+        <div class="period">本月会话</div>
+      </div>
+    </div>
+
+    <div class="section">使用量排名</div>
+    <div class="card">
+      <div class="model">
+        <div class="mname">gpt-5.4</div>
+        <div class="mbar"><div class="mfill" style="width:78%;background:#0a84ff"></div></div>
+        <div class="mtok">62k</div>
+      </div>
+      <div class="model">
+        <div class="mname">gpt-5.3-codex</div>
+        <div class="mbar"><div class="mfill" style="width:45%;background:#5e5ce6"></div></div>
+        <div class="mtok">36k</div>
+      </div>
+      <div class="model">
+        <div class="mname">o4-mini</div>
+        <div class="mbar"><div class="mfill" style="width:22%;background:#30d158"></div></div>
+        <div class="mtok">18k</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

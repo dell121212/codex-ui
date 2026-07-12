@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>codex-ui hero</title>
+<style>
+:root {
+  --bg0:#000; --bg1:#1c1c1e; --bg2:#2c2c2e;
+  --sep-soft:rgba(255,255,255,.06); --sep:rgba(84,84,88,.65);
+  --t1:#f5f5f7; --t2:rgba(235,235,245,.78); --t3:rgba(235,235,245,.48);
+  --blue:#0a84ff;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body {
+  font-family:var(--font); color:var(--t1);
+  width:1280px; height:720px; overflow:hidden;
+  background:
+    radial-gradient(900px 500px at 20% 0%, rgba(10,132,255,.12), transparent 55%),
+    radial-gradient(700px 420px at 90% 80%, rgba(94,92,230,.10), transparent 50%),
+    #0a0a0b;
+  display:flex; align-items:center; justify-content:center; gap:36px;
+  padding:48px 56px;
+  -webkit-font-smoothing:antialiased;
+}
+.left { flex:1; max-width:420px; }
+.brand {
+  font-size:13px; font-weight:600; color:var(--blue); letter-spacing:.4px;
+  margin-bottom:14px;
+}
+h1 {
+  font-size:36px; font-weight:700; letter-spacing:-1px; line-height:1.15;
+  margin-bottom:12px;
+}
+.lead {
+  font-size:15px; color:var(--t2); line-height:1.55; margin-bottom:22px;
+}
+.bullets { list-style:none; display:flex; flex-direction:column; gap:10px; }
+.bullets li {
+  display:flex; align-items:flex-start; gap:10px;
+  font-size:13px; color:var(--t2); line-height:1.4;
+}
+.bullets i {
+  width:18px; height:18px; border-radius:5px; background:rgba(10,132,255,.16);
+  color:var(--blue); font-style:normal; font-size:11px; font-weight:700;
+  display:grid; place-items:center; flex-shrink:0; margin-top:1px;
+}
+.panel {
+  width:360px; background:var(--bg0); border-radius:14px; overflow:hidden;
+  border:0.5px solid var(--sep-soft);
+  box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03);
+}
+.header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 14px; border-bottom:0.5px solid var(--sep-soft);
+  background:linear-gradient(180deg,rgba(28,28,30,.96),rgba(28,28,30,.88));
+}
+.ht { font-weight:600; font-size:14px; }
+.hb { display:flex; gap:5px; color:var(--t3); font-size:12px; }
+.chrome { padding:10px 10px 0; }
+.company {
+  display:flex; align-items:center; gap:8px; padding:9px 11px;
+  background:var(--bg1); border:0.5px solid var(--sep-soft); border-radius:11px;
+}
+.dot { width:8px; height:8px; border-radius:50%; background:#10a37f; }
+.cn { font-weight:600; font-size:12px; }
+.cs { font-size:10px; color:var(--t3); }
+.tag {
+  margin-left:auto; font-size:10px; font-weight:600; color:var(--blue);
+  background:rgba(10,132,255,.14); padding:2px 7px; border-radius:999px;
+}
+.body { padding:10px; display:flex; flex-direction:column; gap:8px; }
+.card {
+  background:var(--bg1); border:0.5px solid var(--sep-soft); border-radius:12px; padding:12px;
+}
+.lab { font-size:10px; font-weight:600; color:var(--t3); margin-bottom:6px; }
+.row { display:flex; justify-content:space-between; align-items:baseline; }
+.big { font-size:24px; font-weight:700; letter-spacing:-.6px; }
+.muted { font-size:11px; color:var(--t2); }
+.bar { height:7px; border-radius:999px; background:rgba(120,120,128,.28); overflow:hidden; margin:8px 0 6px; }
+.fill { height:100%; border-radius:999px; }
+.f42 { width:42%; background:rgb(113,105,172); }
+.f67 { width:67%; background:rgb(174,89,123); }
+.stat { display:flex; justify-content:space-between; font-size:11px; padding:2px 0; }
+.stat span:first-child { color:var(--t3); }
+.stat span:last-child { font-weight:600; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.amt { font-size:18px; font-weight:700; letter-spacing:-.4px; margin:2px 0; }
+.per { font-size:10px; color:var(--t3); }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="brand">LINUX TRAY · OPEN SOURCE</div>
+    <h1>多公司 AI 额度<br/>一眼看清</h1>
+    <p class="lead">
+      托盘常驻的轻量看板：自动读取本机登录态，优先展示官方剩余额度。
+      不粘贴 token，不装 Electron。
+    </p>
+    <ul class="bullets">
+      <li><i>✓</i><span>OpenAI Codex 5h / 7d 真实窗口</span></li>
+      <li><i>✓</i><span>Grok / Mistral 走官方 billing，不是上下文窗口</span></li>
+      <li><i>✓</i><span>蓝→红热力条 · 磁盘缓存秒开 · 远端并行刷新</span></li>
+      <li><i>✓</i><span>一条命令启动：<code style="color:#64d2ff">./run.sh</code></span></li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <div class="header">
+      <div class="ht">codex-ui</div>
+      <div class="hb">↻ &nbsp; − &nbsp; ✕</div>
+    </div>
+    <div class="chrome">
+      <div class="company">
+        <div class="dot"></div>
+        <div>
+          <div class="cn">OpenAI</div>
+          <div class="cs">Codex</div>
+        </div>
+        <div class="tag">42%</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="card">
+        <div class="lab">5 小时</div>
+        <div class="row">
+          <div class="big">42%</div>
+          <div class="muted">2小时 18分钟后重置</div>
+        </div>
+        <div class="bar"><div class="fill f42"></div></div>
+        <div class="stat"><span>已用</span><span>12.4k</span></div>
+        <div class="stat"><span>剩余</span><span>17.1k</span></div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <div class="lab" style="margin:0">7 天</div>
+          <div style="font-size:16px;font-weight:700">67%</div>
+        </div>
+        <div class="bar"><div class="fill f67"></div></div>
+        <div class="stat"><span>已用</span><span>84.2k</span></div>
+        <div class="stat"><span>重置</span><span>3天 6小时</span></div>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="lab">今日</div>
+          <div class="amt">~8.2k</div>
+          <div class="per">Token</div>
+        </div>
+        <div class="card">
+          <div class="lab">估价</div>
+          <div class="amt">~$1.24</div>
+          <div class="per">本月会话</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

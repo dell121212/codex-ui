@@ -1,5 +1,5 @@
-import { Minus, RefreshCw, Settings } from 'lucide-react';
-import { hideWindow } from '../services/neutralinoBackend';
+import { RefreshCw, Settings, X } from 'lucide-react';
+import { quitApp } from '../services/neutralinoBackend';
 
 interface Props {
   isRefreshing: boolean;
@@ -16,27 +16,29 @@ function timeAgo(d: Date): string {
   return `${Math.floor(secs / 60)} 分钟前`;
 }
 
-export default function Header({ isRefreshing, onRefresh, onOpenSettings, lastUpdated, hasError }: Props) {
+export default function Header({
+  isRefreshing,
+  onRefresh,
+  onOpenSettings,
+  lastUpdated,
+  hasError,
+}: Props) {
   return (
     <div className="header">
-      <div className="header-left header-drag-region">
-        <div className={`status-dot ${hasError ? 'status-dot--warn' : ''}`} />
-        <span className="header-title">Codex 用量</span>
+      {/* Drag only the title strip — never the action buttons */}
+      <div className="header-left">
+        <div className="header-title-drag" data-drag-region>
+          <div className={`status-dot ${hasError ? 'status-dot--warn' : ''}`} />
+          <span className="header-title">用量</span>
+        </div>
         {lastUpdated && (
           <span className="header-time">{timeAgo(lastUpdated)}</span>
         )}
       </div>
 
-      <div className="header-right">
+      <div className="header-right" data-no-drag>
         <button
-          className="icon-btn"
-          onClick={() => hideWindow()}
-          title="最小化到托盘"
-          aria-label="最小化到托盘"
-        >
-          <Minus size={13} />
-        </button>
-        <button
+          type="button"
           className="icon-btn"
           onClick={onRefresh}
           title="刷新"
@@ -49,12 +51,22 @@ export default function Header({ isRefreshing, onRefresh, onOpenSettings, lastUp
           />
         </button>
         <button
+          type="button"
           className="icon-btn"
           onClick={onOpenSettings}
           title="设置"
           aria-label="打开设置"
         >
           <Settings size={13} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn icon-btn--close"
+          onClick={() => quitApp()}
+          title="退出"
+          aria-label="退出"
+        >
+          <X size={14} />
         </button>
       </div>
     </div>

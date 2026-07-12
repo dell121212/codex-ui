@@ -21,6 +21,30 @@ export const EMPTY_WINDOW: WindowUsage = {
 
 export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
 
+/**
+ * True when a window carries no server/local signal at all.
+ * Legitimate 0% after a reset still has duration / reset_at / limit metadata —
+ * those must NOT be treated as "missing" or local fallback will flash fake zeros
+ * onto the other window and make quotas look like they jump together.
+ */
+export function isWindowMissing(window: WindowUsage | null | undefined): boolean {
+  if (!window) return true;
+  return (
+    window.limit === 0
+    && window.used === 0
+    && window.percent === 0
+    && window.window_duration_mins === 0
+    && window.reset_at_unix === 0
+  );
+}
+
+/** Prefer remote; only fill gaps. Never overwrite an explicit 0% reset. */
+export function coalesceWindow(preferred: WindowUsage, fallback: WindowUsage | null | undefined): WindowUsage {
+  if (!isWindowMissing(preferred)) return preferred;
+  if (fallback && !isWindowMissing(fallback)) return fallback;
+  return preferred;
+}
+
 export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> | null {
   const data = record(raw);
   const entries = rateLimitEntries(data);
@@ -119,6 +143,11 @@ function parseResetCredit(raw: unknown): ResetCredit | null {
   };
 }
 
+/**
+ * Parse current ChatGPT WHAM / usage payload shapes:
+ * - rate_limit.primary_window / secondary_window (2026 live shape)
+ * - legacy grants[] / usage.plus_5h flat maps
+ */
 export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> {
   const data = record(raw);
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
@@ -138,14 +167,39 @@ export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h'
   const flat = record(data.usage);
   if (flat.plus_5h || flat.pro_5h) window_5h = fillWindowFromGrant(flat.plus_5h ?? flat.pro_5h);
   if (flat.plus_weekly || flat.pro_weekly) window_weekly = fillWindowFromGrant(flat.plus_weekly ?? flat.pro_weekly);
-  const resetCredits = parseResetCredits(data.rateLimitResetCredits ?? data.rate_limit_reset_credits);
+
+  // Live WHAM: { rate_limit: { primary_window: { used_percent, limit_window_seconds, reset_at } } }
+  const rateLimit = record(data.rate_limit ?? data.rateLimit);
+  const primaryLive = parseWhamLimitWindow(
+    rateLimit.primary_window ?? rateLimit.primaryWindow ?? rateLimit.primary,
+  );
+  const secondaryLive = parseWhamLimitWindow(
+    rateLimit.secondary_window ?? rateLimit.secondaryWindow ?? rateLimit.secondary,
+  );
+  if (primaryLive) window_5h = primaryLive;
+  if (secondaryLive) window_weekly = secondaryLive;
+
+  const planTypeRaw = data.plan_type ?? data.planType ?? rateLimit.plan_type ?? rateLimit.planType;
+  const plan_type = typeof planTypeRaw === 'string' && planTypeRaw.trim() ? planTypeRaw.trim() : null;
+
+  const resetCredits = parseResetCredits(
+    data.rateLimitResetCredits ?? data.rate_limit_reset_credits,
+  );
+
   const rate_limits: RateLimitBucket[] = [{
     id: 'codex',
     name: null,
     primary: window_5h,
     secondary: window_weekly,
-    plan_type: null,
+    plan_type,
   }];
+
+  // Optional independent model limits when WHAM includes them.
+  const extra = array(data.additional_rate_limits ?? data.additionalRateLimits) ?? [];
+  for (const item of extra) {
+    const bucket = parseRateLimitBucket(item);
+    if (bucket && bucket.id.toLowerCase() !== 'codex') rate_limits.push(bucket);
+  }
 
   return {
     window_5h,
@@ -157,6 +211,33 @@ export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h'
       lifetime_used: 0,
       last_reset_at: null,
     },
+  };
+}
+
+/** WHAM window: used_percent + limit_window_seconds + reset_at (unix or ISO). */
+export function parseWhamLimitWindow(raw: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
+  if (raw == null) return null;
+  const percent = numberField(raw, ['used_percent', 'usedPercent']);
+  if (percent === null) return null;
+
+  const resetAt = timestampField(raw, ['reset_at', 'resetAt', 'resets_at', 'resetsAt']) ?? 0;
+  const windowSecs = numberField(raw, [
+    'limit_window_seconds',
+    'limitWindowSeconds',
+    'window_seconds',
+    'windowSeconds',
+  ]);
+  const windowMinutes = windowSecs !== null
+    ? Math.max(0, Math.round(windowSecs / 60))
+    : (numberField(raw, ['window_minutes', 'windowDurationMins', 'window_duration_mins']) ?? 0);
+
+  return {
+    used: Math.round(clamp(percent, 0, 100)),
+    limit: 100,
+    percent: clamp(percent, 0, 100),
+    window_duration_mins: Math.max(0, windowMinutes),
+    reset_at_unix: resetAt,
+    remaining_secs: Math.max(0, resetAt > 0 ? resetAt - nowUnix : 0),
   };
 }
 
@@ -176,6 +257,30 @@ export function fillWindowFromGrant(grant: unknown, nowUnix = Math.floor(Date.no
   };
 }
 
+/** Pull model slug from common Codex rollout payload shapes. */
+export function extractPayloadModel(payload: unknown): string | null {
+  const data = record(payload);
+  const direct = data.model;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  const thread = record(data.thread_settings);
+  if (typeof thread.model === 'string' && thread.model.trim()) return thread.model.trim();
+
+  const collab = record(data.collaboration_mode);
+  const collabSettings = record(collab.settings);
+  if (typeof collabSettings.model === 'string' && collabSettings.model.trim()) {
+    return collabSettings.model.trim();
+  }
+
+  const threadCollab = record(thread.collaboration_mode);
+  const threadCollabSettings = record(threadCollab.settings);
+  if (typeof threadCollabSettings.model === 'string' && threadCollabSettings.model.trim()) {
+    return threadCollabSettings.model.trim();
+  }
+
+  return null;
+}
+
 export function parseRolloutFile(content: string): { messages: number; tokens: number; modelMap: ModelTokenMap } {
   let messages = 0;
   let tokens = 0;
@@ -188,7 +293,8 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
 
     const entryRecord = record(entry);
     const payload = record(entryRecord.payload);
-    if (payload.model) currentModel = String(payload.model);
+    const payloadModel = extractPayloadModel(payload);
+    if (payloadModel) currentModel = payloadModel;
     if (payload.type === 'token_count') {
       const info = record(payload.info);
       const usageRaw = info.last_token_usage;
@@ -200,6 +306,7 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
         const output = Number(usage.output_tokens ?? 0);
         const total = Math.max(Number(usage.total_tokens ?? 0), input + output);
         tokens += total;
+        // token_count events omit model; use last turn_context / settings model.
         addModelUsage(modelMap, currentModel ?? 'codex', input, cached, output);
         continue;
       }
@@ -233,41 +340,100 @@ export function parseLocalLimitWindow(raw: unknown, nowUnix = Math.floor(Date.no
   const percent = Number(data.used_percent ?? data.usedPercent);
   if (!Number.isFinite(percent)) return null;
   let resetAt = Number(data.resets_at ?? data.resetsAt ?? 0);
-  const windowMinutes = Number(data.window_minutes ?? data.windowDurationMins ?? 0);
-  if (resetAt > 0 && resetAt <= nowUnix && windowMinutes > 0) {
+  // Normalize ms timestamps the same way remote parsing does.
+  if (resetAt > 10_000_000_000) resetAt = Math.floor(resetAt / 1000);
+  const windowMinutes = Number(data.window_minutes ?? data.windowDurationMins ?? data.window_duration_mins ?? 0);
+  if (!Number.isFinite(windowMinutes) || windowMinutes < 0) return null;
+
+  // Only auto-roll short windows from stale session JSONL.
+  // Long (daily/weekly) windows must not be zeroed from a shared/stale resets_at —
+  // that is what made 7-day look like it reset whenever 5h rolled over.
+  const isShortWindow = windowMinutes > 0 && windowMinutes <= 12 * 60;
+  if (isShortWindow && resetAt > 0 && resetAt <= nowUnix) {
     const windowSecs = windowMinutes * 60;
     resetAt = resetAt + (Math.floor((nowUnix - resetAt) / windowSecs) + 1) * windowSecs;
-      return {
+    return {
       used: 0,
       limit: 100,
-        percent: 0,
-        window_duration_mins: Math.max(0, windowMinutes),
-        reset_at_unix: resetAt,
+      percent: 0,
+      window_duration_mins: Math.max(0, windowMinutes),
+      reset_at_unix: resetAt,
       remaining_secs: Math.max(0, resetAt - nowUnix),
     };
   }
+
+  // Long/unknown windows: keep the recorded percent; only clamp remaining.
   return {
-    used: Math.round(percent),
+    used: Math.round(clamp(percent, 0, 100)),
     limit: 100,
     percent: clamp(percent, 0, 100),
     window_duration_mins: Math.max(0, windowMinutes),
     reset_at_unix: resetAt,
-    remaining_secs: Math.max(0, resetAt - nowUnix),
+    remaining_secs: Math.max(0, resetAt > 0 ? resetAt - nowUnix : 0),
   };
+}
+
+export function modelTokenTotal(model: Pick<ModelUsage, 'input_tokens' | 'output_tokens'>): number {
+  return model.input_tokens + model.output_tokens;
+}
+
+/** Models with captured tokens first, highest usage first. Drops empty rows. */
+export function rankModelsByTokens(models: ModelUsage[]): ModelUsage[] {
+  return models
+    .filter((model) => modelTokenTotal(model) > 0)
+    .sort((a, b) => modelTokenTotal(b) - modelTokenTotal(a));
+}
+
+/**
+ * Rank independent quota buckets: models we actually saw in local sessions first,
+ * then higher remote usage percent. Unused empty buckets sink to the bottom.
+ */
+export function rankRateLimitBuckets(
+  buckets: RateLimitBucket[],
+  usedModels: Iterable<string> = [],
+): RateLimitBucket[] {
+  const used = [...usedModels]
+    .map((id) => id.toLowerCase().trim())
+    .filter(Boolean);
+
+  const score = (bucket: RateLimitBucket): number => {
+    const id = bucket.id.toLowerCase();
+    const name = (bucket.name ?? '').toLowerCase();
+    let hit = 0;
+    for (const model of used) {
+      if (
+        model === id
+        || model.startsWith(`${id}-`)
+        || id.startsWith(`${model}-`)
+        || (name && (model.includes(name) || name.includes(model)))
+        || model.includes(id)
+        || id.includes(model)
+      ) {
+        hit = 1;
+        break;
+      }
+    }
+    const usage = Math.max(bucket.primary.percent, bucket.secondary.percent);
+    // used-with-tokens: 2_xxx, used-by-percent only: 1_xxx, idle: 0_xxx
+    const tier = hit ? 2 : usage > 0 ? 1 : 0;
+    return tier * 1_000 + usage;
+  };
+
+  return [...buckets].sort((a, b) => score(b) - score(a));
 }
 
 export function buildPeriodUsage(messages: number, tokens: number, modelMap: ModelTokenMap): PeriodUsage {
   const denominator = Math.max(tokens, 1);
-  const models: ModelUsage[] = Array.from(modelMap.entries())
-    .map(([model, usage]) => ({
+  const models = rankModelsByTokens(
+    Array.from(modelMap.entries()).map(([model, usage]) => ({
       model,
       input_tokens: usage.input,
       cached_input_tokens: usage.cached,
       output_tokens: usage.output,
       cost_usd: null,
       percent_of_total: ((usage.input + usage.output) / denominator) * 100,
-    }))
-    .sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens));
+    })),
+  );
   return { messages, tokens, models };
 }
 
@@ -285,19 +451,44 @@ export function mergeModelMap(target: ModelTokenMap, source: ModelTokenMap) {
   }
 }
 
-const PRICING_AS_OF = '2026-07-10';
+const PRICING_AS_OF = '2026-07-11';
 
-// Standard API-equivalent text-token prices in USD per 1M tokens.
+/**
+ * Standard API-equivalent text-token prices in USD per 1M tokens.
+ * Source: https://developers.openai.com/api/docs/pricing (standard short-context).
+ * Keep longer / more specific ids first is not required — priceFor picks the longest match.
+ */
 const PRICES: Array<{ id: string; input: number; cached: number; output: number }> = [
+  // GPT-5.6 family (current Codex defaults)
+  { id: 'gpt-5.6-sol', input: 5, cached: 0.5, output: 30 },
+  { id: 'gpt-5.6-terra', input: 2.5, cached: 0.25, output: 15 },
+  { id: 'gpt-5.6-luna', input: 1, cached: 0.1, output: 6 },
+  // xAI Grok (API-equivalent; local capture often lacks output split)
+  { id: 'grok-4.5', input: 3, cached: 0.75, output: 15 },
+  { id: 'grok-4', input: 3, cached: 0.75, output: 15 },
+  { id: 'grok-3', input: 3, cached: 0.75, output: 15 },
+  // Mistral Vibe / Devstral (from Vibe default config.toml prices)
+  { id: 'mistral-medium-3.5', input: 1.5, cached: 0.375, output: 7.5 },
+  { id: 'mistral-vibe-cli-latest', input: 1.5, cached: 0.375, output: 7.5 },
+  { id: 'mistral-medium', input: 1.5, cached: 0.375, output: 7.5 },
+  { id: 'devstral-small-latest', input: 0.1, cached: 0.025, output: 0.3 },
+  { id: 'devstral-small', input: 0.1, cached: 0.025, output: 0.3 },
+  { id: 'devstral', input: 0.1, cached: 0.025, output: 0.3 },
+  // GPT-5.5 / 5.4
+  { id: 'gpt-5.5-pro', input: 30, cached: 30, output: 180 },
+  { id: 'gpt-5.5', input: 5, cached: 0.5, output: 30 },
+  { id: 'gpt-5.4-pro', input: 30, cached: 30, output: 180 },
+  { id: 'gpt-5.4-mini', input: 0.75, cached: 0.075, output: 4.5 },
+  { id: 'gpt-5.4-nano', input: 0.2, cached: 0.02, output: 1.25 },
+  { id: 'gpt-5.4', input: 2.5, cached: 0.25, output: 15 },
+  // Codex-branded lines
   { id: 'gpt-5.3-codex', input: 1.75, cached: 0.175, output: 14 },
   { id: 'gpt-5.2-codex', input: 1.75, cached: 0.175, output: 14 },
   { id: 'gpt-5.1-codex', input: 1.25, cached: 0.125, output: 10 },
   { id: 'gpt-5-codex', input: 1.25, cached: 0.125, output: 10 },
   { id: 'codex-mini-latest', input: 1.5, cached: 0.375, output: 6 },
-  { id: 'gpt-5.5', input: 5, cached: 0.5, output: 30 },
-  { id: 'gpt-5.4-mini', input: 0.75, cached: 0.075, output: 4.5 },
-  { id: 'gpt-5.4-nano', input: 0.2, cached: 0.02, output: 1.25 },
-  { id: 'gpt-5.4', input: 2.5, cached: 0.25, output: 15 },
+  // Older GPT-5 / 4.1
+  { id: 'gpt-5.2', input: 1.75, cached: 0.175, output: 14 },
   { id: 'gpt-5', input: 1.25, cached: 0.125, output: 10 },
   { id: 'gpt-4.1-nano', input: 0.1, cached: 0.025, output: 0.4 },
   { id: 'gpt-4.1-mini', input: 0.4, cached: 0.1, output: 1.6 },
@@ -334,9 +525,23 @@ export function computeSpend(month: PeriodUsage, now = new Date()): SpendInfo {
   };
 }
 
+/**
+ * Match model slug to a price row.
+ * Accepts exact ids and suffix variants (`gpt-5.3-codex-high`, date stamps).
+ * Longest id wins so `gpt-5.4-mini` is not billed as `gpt-5.4` / `gpt-5`.
+ */
 export function priceFor(model: string) {
   const normalized = model.toLowerCase().trim();
-  return PRICES.find(({ id }) => normalized === id || normalized.startsWith(`${id}-20`)) ?? null;
+  if (!normalized) return null;
+
+  let best: (typeof PRICES)[number] | null = null;
+  for (const price of PRICES) {
+    const id = price.id;
+    if (normalized === id || normalized.startsWith(`${id}-`)) {
+      if (!best || id.length > best.id.length) best = price;
+    }
+  }
+  return best;
 }
 
 
@@ -402,6 +607,19 @@ function record(value: unknown): UnknownRecord {
 export function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Continuous heat color for quota meters.
+ * Low usage → blue (#0a84ff); high usage → red (#ff453a).
+ */
+export function usageHeatColor(percent: number): string {
+  const t = clamp(percent, 0, 100) / 100;
+  // Apple system blue → system red
+  const r = Math.round(10 + (255 - 10) * t);
+  const g = Math.round(132 + (69 - 132) * t);
+  const b = Math.round(255 + (58 - 255) * t);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 export function round(value: number, places: number): number {

@@ -1,53 +1,64 @@
 # codex-ui
 
-Codex 在 Windows 和 macOS 上有专门的桌面应用，但 Linux 用户很多时候只能依赖命令行。额度用了多少、5 小时窗口什么时候重置、本周额度还剩多少，这些信息并不会安静地待在桌面上等你查看。
+<p align="center">
+  <img src="./docs/images/hero.jpg" alt="codex-ui 宣传图" width="900" />
+</p>
 
-这就是 codex-ui 诞生的原因：给 Linux 用户一个轻量、可常驻、开箱即用的 Codex 用量看板。它不会要求你反复复制 token，也不需要你记一串启动命令。运行一次脚本，应用会自动读取本机 Codex 登录态，构建并启动托盘小组件；需要长期使用时，也可以在设置里傻瓜式开启开机自启。
+<p align="center">
+  <strong>Linux 托盘里的多公司 AI 额度看板</strong><br/>
+  OpenAI Codex · Claude · Grok · Mistral · 月之暗面 · 智谱
+</p>
 
-当前技术栈：Neutralino + React + TypeScript。
+<p align="center">
+  <a href="./README.md">English</a>
+  ·
+  <a href="#快速开始">快速开始</a>
+  ·
+  <a href="#功能亮点">功能亮点</a>
+</p>
+
+---
+
+Codex 在 Windows / macOS 有官方桌面端，Linux 上往往只剩 CLI。想知道 **还剩多少额度、何时重置**，通常要翻终端或网页控制台。
+
+**codex-ui** 是一个轻量托盘应用：不挡路、不装 Electron 全家桶。一条脚本、沿用本机已有登录态，优先展示**官方剩余额度**（在提供方暴露接口时），无需粘贴 token。
+
+技术栈：**Neutralino + React + TypeScript**。
 
 ## 界面预览
 
 <p align="center">
-  <img width="615" height="698" alt="codex-ui 界面预览" src="https://github.com/user-attachments/assets/9bed0445-c887-4be8-8fcd-a2e4da8845c4" />
+  <img src="./docs/images/dashboard.png" alt="用量看板示意" width="320" />
+  &nbsp;
+  <img src="./docs/images/features.jpg" alt="功能卡片" width="480" />
 </p>
 
 <p align="center">
-  <img src="./截图%202026-07-10%2013-27-13.png" alt="Codex 用量看板" width="360" />
-  <img src="./截图%202026-07-10%2013-27-20.png" alt="codex-ui 设置页" width="360" />
+  <img src="./docs/images/promo-square.jpg" alt="宣传方图" width="360" />
 </p>
 
-## 亮点
+## 功能亮点
 
-- 通过 Codex app-server 读取本机登录态与真实额度
-- 没有 token 时自动引导执行 `codex login`
-- 傻瓜式一键运行：只需要 `./run.sh`
-- 傻瓜式设置开机自启：在设置面板里点一下即可
-- 常驻托盘查看主额度、旧模型独立额度和下次重置时间
-- 显示服务端返回的手动重置次数，并安全执行重置
-- 按公开 API 单价估算本地 Codex 会话的等价美元成本
-- Zorin / Wayland 下保留任务栏入口，托盘不可用时也能找回窗口
+| 模块 | 说明 |
+|------|------|
+| **多公司折叠选择** | OpenAI / Claude / Grok / Mistral / Kimi / GLM；**已抓到用量的公司自动置顶** |
+| **OpenAI Codex** | 5 小时 / 7 天窗口（app-server 或 WHAM）、重置次数、模型用量与 API 等价估价 |
+| **Grok** | 官方 `cli-chat-proxy` billing：周额度 + Build/Chat + 月 credit（**不是**上下文窗口） |
+| **Mistral Vibe** | 月 Token；有 rate-limit 头则用官方，免费档无月 cap 时展示本月本地会话 |
+| **热力进度条** | **蓝 → 红**连续渐变：越低越蓝，越高越红 |
+| **秒开体验** | 磁盘 SWR：先画上次缓存，后台刷新；Codex / Grok / Mistral 远端并行 |
+| **本机优先** | 自动读 `~/.codex`、`~/.grok`、`~/.vibe` |
+| **Linux 托盘** | 设置里可开开机自启；Zorin / Wayland 保留任务栏入口 |
 
-## 使用
-
-用户只需要运行：
+## 快速开始
 
 ```bash
 ./run.sh
 ```
 
-脚本会自动完成安装、构建和启动：
+脚本会安装依赖、准备 Neutralino、检查 Codex 登录（必要时 `codex login`）、构建并启动托盘 UI。
 
-- 检查 Node/npm
-- 安装 npm 依赖
-- 准备固定版本的 Neutralino 运行时
-- 检查 Codex 登录态
-- 没有 token 时自动启动 `codex login`
-- 只清理本应用的旧进程
-- 自动构建应用
-- 启动托盘小组件
-
-## 开发者校验
+### 开发校验
 
 ```bash
 npm test
@@ -55,52 +66,70 @@ npm run typecheck
 npm run build
 ```
 
-## 应用目录
+### 产物路径
 
 ```text
 neutralino-dist/codex-ui/
-```
-
-Linux x64 可执行文件：
-
-```text
 neutralino-dist/codex-ui/bin/neutralino-linux_x64
 ```
 
-开机自启可在设置面板中开启；正常使用只需要运行 `./run.sh`。
+## 额度如何加载
+
+```text
+打开托盘
+  → 有缓存则立刻显示
+  → 阶段 A：本地扫描 + 合并上次远端数字
+  → 阶段 B：并行官方接口
+       · Codex app-server / WHAM
+       · Grok  GET /v1/billing（含 ?format=credits）
+       · Mistral rate-limit 探测（约 10 分钟缓存）
+```
+
+Grok / Mistral **不会**把会话 context 窗口计数当成 API 额度消耗。
+
+## 本机认证路径（只读）
+
+| 公司 | 路径 |
+|------|------|
+| OpenAI Codex | `~/.codex/auth.json` |
+| Grok / xAI | `~/.grok/auth.json`（OIDC） |
+| Mistral Vibe | `~/.vibe/.env`（`MISTRAL_API_KEY`） |
+
+界面不粘贴 token。网络请求使用临时 curl 配置文件，用后清理。
 
 ## Zorin / Wayland
 
-这个应用会保留普通任务栏入口。即使托盘图标在 Zorin / Wayland 下不可见，用户也能从任务栏找回用量看板。
+窗口保留任务栏入口，托盘图标不可用时也能找回看板。
 
-在 Zorin GNOME Wayland 上，脚本会检测 Zorin 自带托盘扩展：
-
-```text
-zorin-appindicator@zorinos.com
-```
-
-默认启动不会执行 `sudo` 或修改 GNOME 扩展。需要自动安装/启用托盘支持时，显式运行：
+可选：
 
 ```bash
 ./run.sh --setup-tray
 ```
 
-如果扩展刚被启用，Wayland 会话可能需要注销并重新登录后托盘图标才会出现。无论托盘是否可用，主窗口都会保留在任务栏中。
-
-## 登录态
-
-应用会自动读取：
+## 目录结构
 
 ```text
-~/.codex/auth.json
+src/
+  components/     # 看板 UI（公司折叠、环图、Grok/Mistral 面板）
+  services/       # 用量解析、本地抓取、Neutralino 后端
+  store/          # Zustand
+docs/images/      # README 宣传图
 ```
 
-如果没有 Codex token，脚本会自动执行 `codex login`。用户只需要按 Codex CLI/浏览器提示完成授权，不需要手动输入命令。
+## 隐私与对本机影响
 
-应用不会保存 ChatGPT Cookie。若 app-server 在较旧 Codex CLI 上不可用，会使用同一 CLI token 进行只读 HTTP 降级。
+- 额度缓存仅存本机（Neutralino storage / 小 JSON）
+- 不装驱动、不改系统网络
+- 开机自启仅在你于设置中开启时生效
+- `docs/images/` 仅为宣传素材，不参与运行时逻辑
 
-## 数据说明
+## 状态
 
-- 多组额度来自 `account/rateLimits/read`，按服务端 `limitId` 动态展示，不硬编码模型名。
-- 手动重置次数来自 `rateLimitResetCredits.availableCount`；只有明确返回 `reset` 或 `alreadyRedeemed` 才记录成功。
-- 美元金额是订阅内 token 按标准 API 单价换算的等价估算，不是实际账单。未知模型不会套用默认价格，而会标记为未计价。
+个人开源项目，欢迎 Issue / PR。
+
+---
+
+<p align="center">
+  <sub>给只想知道「AI 额度还剩多少」的 Linux 用户。</sub>
+</p>

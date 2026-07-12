@@ -2,31 +2,47 @@ import type {
   AuthStatus,
   BankedResets,
   RateLimitBucket,
-  PeriodUsage,
+  ProviderLocalUsage,
   ResetOutcome,
   Settings,
   UsageSnapshot,
   WindowUsage,
 } from '../types';
 import {
-  buildPeriodUsage,
   clamp,
+  coalesceWindow,
   computeSpend,
   EMPTY_WINDOW,
-  enrichWithCosts,
-  mergeModelMap,
+  isWindowMissing,
   parseCodexUsage,
   parseJson,
   parseLocalLimitWindow,
-  parseRolloutFile,
   parseWhamResponse,
 } from './usageLogic';
+import {
+  buildMistralTokenQuota,
+  captureAllLocalProviders,
+  EMPTY_PERIOD as EMPTY_LOCAL_PERIOD,
+  extractMistralApiKey,
+  loadGrokAccessToken,
+  parseGrokBillingResponses,
+  parseMistralAdminLimits,
+  parseMistralRateLimitHeaders,
+  parseVibeActiveModel,
+  parseVibeWhoAmI,
+} from './localProviders';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
 const WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CODEX_RESET_CREDIT_URL = 'https://chatgpt.com/backend-api/api/codex/rate-limit-reset-credits/consume';
 const WHAM_RESET_CREDIT_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume';
+const GROK_BILLING_CREDITS_URL = 'https://cli-chat-proxy.grok.com/v1/billing?format=credits';
+const GROK_BILLING_MONTHLY_URL = 'https://cli-chat-proxy.grok.com/v1/billing';
+const MISTRAL_VIBE_WHOAMI_URL = 'https://chat.mistral.ai/api/vibe/whoami';
+const MISTRAL_CHAT_URL = 'https://api.mistral.ai/v1/chat/completions';
+const MISTRAL_ADMIN_SPEND_URL = 'https://console.mistral.ai/api/admin/spend-limit';
+const MISTRAL_ADMIN_RATE_URL = 'https://console.mistral.ai/api/admin/rate-limit';
 const AUTOSTART_ID = 'codex-ui.desktop';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -35,28 +51,30 @@ const DEFAULT_SETTINGS: Settings = {
   notify_at_90_pct: true,
 };
 
-const EMPTY_PERIOD: PeriodUsage = {
-  messages: 0,
-  tokens: 0,
-  models: [],
-};
-
 type Auth = { kind: 'bearer'; accessToken: string; accountId?: string };
 
 type CodexAuthResult =
   | { ok: true; auth: Auth & { kind: 'bearer' }; path: string }
   | { ok: false; path?: string; reason: string };
 
+/** In-memory snapshot cache. `at` = last successful remote-inclusive refresh. */
 let cached: { snapshot: UsageSnapshot; at: number } | null = null;
 let refreshInFlight: Promise<UsageSnapshot> | null = null;
 let quotaAlertActive = false;
 let refreshTimer: number | null = null;
 const listeners = new Set<(snapshot: UsageSnapshot) => void>();
-const rolloutCache = new Map<string, {
-  modifiedAt: number;
-  size: number;
-  parsed: ReturnType<typeof parseRolloutFile>;
-}>();
+
+/** Serve memory cache as fresh for this long (matches default refresh cadence). */
+const FRESH_MS = 55_000;
+/** Disk SWR: still paint immediately, revalidate in background. */
+const DISK_CACHE_KEY = 'usage_cache_v1';
+/** Mistral chat rate-limit probe is expensive — reuse for 10 minutes. */
+const MISTRAL_PROBE_TTL_MS = 10 * 60 * 1000;
+let mistralProbeCache: {
+  at: number;
+  model: string;
+  limits: ReturnType<typeof parseMistralRateLimitHeaders>;
+} | null = null;
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -64,6 +82,42 @@ function record(value: unknown): Record<string, unknown> {
 
 function nativeApi(): NeutralinoApi | null {
   return window.Neutralino ?? (typeof Neutralino !== 'undefined' ? Neutralino : null);
+}
+
+function publishSnapshot(snapshot: UsageSnapshot) {
+  listeners.forEach((listener) => listener(snapshot));
+}
+
+function isCacheFresh(at: number): boolean {
+  return Date.now() - at < FRESH_MS;
+}
+
+async function loadDiskCache(): Promise<{ snapshot: UsageSnapshot; at: number } | null> {
+  try {
+    const raw = await nativeApi()?.storage.getData(DISK_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { snapshot?: UsageSnapshot; at?: number };
+    if (!parsed?.snapshot || typeof parsed.snapshot !== 'object') return null;
+    const at = typeof parsed.at === 'number' && Number.isFinite(parsed.at) ? parsed.at : 0;
+    return { snapshot: parsed.snapshot, at };
+  } catch {
+    return null;
+  }
+}
+
+async function saveDiskCache(snapshot: UsageSnapshot, at: number): Promise<void> {
+  try {
+    await nativeApi()?.storage.setData(DISK_CACHE_KEY, JSON.stringify({ snapshot, at }));
+  } catch {
+    // best-effort; ignore storage failures
+  }
+}
+
+/** Hydrate memory cache from disk once so first paint is instant after restart. */
+async function ensureMemoryCache(): Promise<void> {
+  if (cached) return;
+  const disk = await loadDiskCache();
+  if (disk) cached = disk;
 }
 
 export function initNeutralinoBackend() {
@@ -89,12 +143,19 @@ export function initNeutralinoBackend() {
   api.events.on('trayIconClicked', () => {
     void api.window.show();
     void api.window.focus();
-    void refreshUsage();
+    // Don't force a full network round-trip when cache is still fresh.
+    if (!cached || !isCacheFresh(cached.at)) {
+      void refreshUsage();
+    }
   });
 
   void api.window.show();
   void api.window.focus();
   void configureTray(0, 0);
+  // Warm disk cache into memory as early as possible (non-blocking).
+  void ensureMemoryCache().then(() => {
+    if (cached) publishSnapshot(cached.snapshot);
+  });
   void scheduleRefresh();
 }
 
@@ -104,24 +165,48 @@ export function onUsageUpdated(listener: (snapshot: UsageSnapshot) => void): () 
 }
 
 export async function getUsage(): Promise<UsageSnapshot> {
-  if (cached && Date.now() - cached.at < 55_000) {
+  await ensureMemoryCache();
+
+  // Fresh enough — serve memory cache.
+  if (cached && isCacheFresh(cached.at)) {
     return cached.snapshot;
   }
-  const localSnapshot = await fetchSnapshot(false);
-  cached = { snapshot: localSnapshot, at: Date.now() };
-  await afterSnapshot(localSnapshot);
-  void refreshUsage();
-  return localSnapshot;
+  // Stale-while-revalidate: paint last good snapshot, refresh in background.
+  if (cached) {
+    void refreshUsage();
+    return cached.snapshot;
+  }
+  return refreshUsage();
 }
 
+/**
+ * Two-phase refresh:
+ * 1) Local scan + previous remote merge → instant UI update
+ * 2) Parallel Codex / Grok / Mistral remote → final snapshot + disk cache
+ */
 export async function refreshUsage(): Promise<UsageSnapshot> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const snapshot = await fetchSnapshot();
-    cached = { snapshot, at: Date.now() };
+    await ensureMemoryCache();
+    const previous = cached?.snapshot ?? null;
+
+    // Phase A — local only (no network). Merge last remote windows so bars don't flash empty.
+    const localSnap = await fetchSnapshot(false, previous);
+    cached = {
+      snapshot: localSnap,
+      // Keep previous freshness so concurrent getUsage still SWR-refreshes if needed.
+      at: cached?.at ?? 0,
+    };
+    publishSnapshot(localSnap);
+
+    // Phase B — full remote (parallel inside fetchSnapshot).
+    const snapshot = await fetchSnapshot(true, localSnap);
+    const now = Date.now();
+    cached = { snapshot, at: now };
+    void saveDiskCache(snapshot, now);
     await afterSnapshot(snapshot);
-    listeners.forEach((listener) => listener(snapshot));
+    publishSnapshot(snapshot);
     return snapshot;
   })();
 
@@ -288,66 +373,96 @@ export async function quitApp(): Promise<void> {
   await nativeApi()?.app.exit();
 }
 
-async function fetchSnapshot(includeRemote = true): Promise<UsageSnapshot> {
+async function fetchSnapshot(
+  includeRemote = true,
+  previous: UsageSnapshot | null = null,
+): Promise<UsageSnapshot> {
   const now = new Date();
   let error: string | undefined;
   let error_kind: string | undefined;
-  let provider = 'local-session';
+  let provider = previous?.provider ?? 'local-session';
+  let remoteLimitsOk = false;
 
-  const localUsage = await parseLocalUsage();
-  const today_local = enrichWithCosts(localUsage.today);
-  const month_local = enrichWithCosts(localUsage.month);
+  // Local filesystem capture first (no network).
+  const localOnly = await captureLocalProvidersOnly();
+  // Phase A: reattach last known remote quota so UI never flashes empty bars.
+  let local_providers = includeRemote
+    ? localOnly
+    : mergePreviousProviderRemotes(localOnly, previous?.local_providers);
+
+  const codexLocal = local_providers.find((p) => p.provider === 'codex');
+  const today_local = codexLocal?.today ?? { ...EMPTY_LOCAL_PERIOD };
+  const month_local = codexLocal?.month ?? { ...EMPTY_LOCAL_PERIOD };
   const spend = computeSpend(month_local);
 
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
   let window_weekly: WindowUsage = { ...EMPTY_WINDOW };
   let rate_limits: RateLimitBucket[] = [];
+  const [lifetime_used, last_reset_at] = await Promise.all([getResetCount(), getLastResetAt()]);
   let banked_resets: BankedResets = {
     available: null,
     credits: [],
-    lifetime_used: await getResetCount(),
-    last_reset_at: await getLastResetAt(),
+    lifetime_used,
+    last_reset_at,
   };
 
-  if (includeRemote) try {
-    let remote: Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'>;
-    try {
-      remote = parseCodexUsage(await callCodexAppServer('account/rateLimits/read', {}))
-        ?? (() => { throw new Error('PARSE_ERROR: Codex app-server 未返回可识别的额度'); })();
-      provider = 'codex-app-server';
-    } catch (appServerError) {
-      const auth = await loadCodexAuth();
-      if (!auth.ok) throw new Error(`NO_AUTH: ${auth.reason}`);
-      remote = await fetchWhamUsage(auth.auth);
-      provider = 'codex-http';
-      if (!remote.rate_limits.length) throw appServerError;
+  // Seed from previous so phase-A paint keeps last Codex numbers.
+  if (previous) {
+    window_5h = previous.window_5h;
+    window_weekly = previous.window_weekly;
+    rate_limits = previous.rate_limits;
+    if (previous.banked_resets) {
+      banked_resets = {
+        ...previous.banked_resets,
+        lifetime_used,
+        last_reset_at,
+      };
     }
-    window_5h = remote.window_5h;
-    window_weekly = remote.window_weekly;
-    rate_limits = remote.rate_limits;
-    banked_resets = {
-      ...remote.banked_resets,
-      lifetime_used: await getResetCount(),
-      last_reset_at: await getLastResetAt(),
-    };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    error = message.replace(/^(NO_AUTH|PARSE_ERROR):\s*/, '');
-    if (message.startsWith('NO_AUTH:')) error_kind = 'NO_AUTH';
-    else if (message.startsWith('PARSE_ERROR:')) error_kind = 'PARSE_ERROR';
-    else if (message.includes('401') || message.includes('403')) error_kind = 'COOKIE_EXPIRED';
-    else error_kind = 'NETWORK_ERROR';
   }
 
+  if (includeRemote) {
+    // Codex + Grok + Mistral remotes in parallel (main wait after local scan).
+    const home = await nativeApi()?.os.getPath('home').catch(() => null);
+    const [codexResult, enrichedProviders] = await Promise.all([
+      fetchCodexRemoteQuota().then(
+        (r) => ({ ok: true as const, ...r }),
+        (e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }),
+      ),
+      home
+        ? enrichProviderRemotes(localOnly, home)
+        : Promise.resolve(localOnly),
+    ]);
+
+    local_providers = enrichedProviders;
+
+    if (codexResult.ok) {
+      window_5h = codexResult.window_5h;
+      window_weekly = codexResult.window_weekly;
+      rate_limits = codexResult.rate_limits;
+      banked_resets = {
+        ...codexResult.banked_resets,
+        lifetime_used,
+        last_reset_at,
+      };
+      provider = codexResult.provider;
+      remoteLimitsOk = true;
+    } else {
+      const message = codexResult.error;
+      error = message.replace(/^(NO_AUTH|PARSE_ERROR|AUTH_EXPIRED):\s*/, '');
+      error_kind = classifyRemoteError(message);
+    }
+  }
+
+  // Local JSONL is a last-resort gap filler only.
   const localLimits = await parseLatestRateLimits();
   if (localLimits) {
-    if (localLimits.primary.percent > 0 && (window_5h.limit === 0 || window_5h.percent === 0)) {
-      window_5h = localLimits.primary;
+    if (!remoteLimitsOk || isWindowMissing(window_5h)) {
+      window_5h = coalesceWindow(window_5h, localLimits.primary);
     }
-    if (localLimits.secondary.percent > 0 && (window_weekly.limit === 0 || window_weekly.percent === 0)) {
-      window_weekly = localLimits.secondary;
+    if (!remoteLimitsOk || isWindowMissing(window_weekly)) {
+      window_weekly = coalesceWindow(window_weekly, localLimits.secondary);
     }
-    if (!rate_limits.length && (window_5h.limit > 0 || window_weekly.limit > 0)) {
+    if (!rate_limits.length && (!isWindowMissing(window_5h) || !isWindowMissing(window_weekly))) {
       rate_limits = [{
         id: 'codex',
         name: null,
@@ -358,6 +473,32 @@ async function fetchSnapshot(includeRemote = true): Promise<UsageSnapshot> {
     }
   }
 
+  // On remote failure keep the last good rate-limit view instead of flashing 0/0.
+  if (!remoteLimitsOk && previous) {
+    window_5h = coalesceWindow(window_5h, previous.window_5h);
+    window_weekly = coalesceWindow(window_weekly, previous.window_weekly);
+    if (!rate_limits.length && previous.rate_limits.length) {
+      rate_limits = previous.rate_limits;
+    }
+    if (banked_resets.available === null && previous.banked_resets.available !== null) {
+      banked_resets = {
+        ...banked_resets,
+        available: previous.banked_resets.available,
+        credits: previous.banked_resets.credits.length
+          ? previous.banked_resets.credits
+          : banked_resets.credits,
+      };
+    }
+  }
+
+  if (rate_limits.length === 1 && rate_limits[0].id === 'codex') {
+    rate_limits = [{
+      ...rate_limits[0],
+      primary: window_5h,
+      secondary: window_weekly,
+    }];
+  }
+
   return {
     fetched_at: now.toISOString(),
     provider,
@@ -366,10 +507,391 @@ async function fetchSnapshot(includeRemote = true): Promise<UsageSnapshot> {
     rate_limits,
     today_local,
     month_local,
+    local_providers,
     banked_resets,
     spend,
     error,
     error_kind,
+  };
+}
+
+/** Local disk capture only — no Grok/Mistral network enrich. */
+async function captureLocalProvidersOnly(): Promise<ProviderLocalUsage[]> {
+  const api = nativeApi();
+  if (!api) return [];
+  try {
+    const home = await api.os.getPath('home');
+    return await captureAllLocalProviders(
+      {
+        readFile: (path) => api.filesystem.readFile(path),
+        readDirectory: (path) => api.filesystem.readDirectory(path),
+        getStats: (path) => api.filesystem.getStats(path),
+      },
+      home,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Reattach previous remote quota onto freshly scanned local providers. */
+function mergePreviousProviderRemotes(
+  fresh: ProviderLocalUsage[],
+  previous?: ProviderLocalUsage[],
+): ProviderLocalUsage[] {
+  if (!previous?.length) return fresh;
+  const prevById = new Map(previous.map((p) => [p.provider, p]));
+  return fresh.map((p) => {
+    const prev = prevById.get(p.provider);
+    if (!prev?.remote || prev.remote.error) return p;
+    return {
+      ...p,
+      remote: prev.remote,
+      authOk: p.authOk ?? prev.authOk,
+    };
+  });
+}
+
+async function enrichProviderRemotes(
+  providers: ProviderLocalUsage[],
+  home: string,
+): Promise<ProviderLocalUsage[]> {
+  return Promise.all(providers.map(async (p) => {
+    if (p.provider === 'grok' && p.available) {
+      try {
+        const remote = await fetchGrokRemoteQuota(home);
+        return { ...p, remote, authOk: p.authOk ?? true };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // Keep previous remote numbers if enrich fails mid-session.
+        if (p.remote && !p.remote.error) {
+          return { ...p, remote: { ...p.remote, error: message } };
+        }
+        return {
+          ...p,
+          remote: {
+            source: 'grok-billing',
+            primary: { ...EMPTY_WINDOW },
+            secondary: { ...EMPTY_WINDOW },
+            products: [],
+            fetched_at: new Date().toISOString(),
+            error: message,
+          },
+        };
+      }
+    }
+    if (p.provider === 'mistral' && p.available) {
+      try {
+        const remote = await fetchMistralRemoteQuota(home, p);
+        return { ...p, remote, authOk: p.authOk ?? true };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (p.remote && !p.remote.error) {
+          return { ...p, remote: { ...p.remote, error: message } };
+        }
+        return p;
+      }
+    }
+    return p;
+  }));
+}
+
+async function fetchCodexRemoteQuota(): Promise<{
+  provider: string;
+  window_5h: WindowUsage;
+  window_weekly: WindowUsage;
+  rate_limits: RateLimitBucket[];
+  banked_resets: BankedResets;
+}> {
+  try {
+    const remote = parseCodexUsage(await callCodexAppServer('account/rateLimits/read', {}))
+      ?? (() => { throw new Error('PARSE_ERROR: Codex app-server 未返回可识别的额度'); })();
+    return {
+      provider: 'codex-app-server',
+      window_5h: remote.window_5h,
+      window_weekly: remote.window_weekly,
+      rate_limits: remote.rate_limits,
+      banked_resets: remote.banked_resets,
+    };
+  } catch (appServerError) {
+    const auth = await loadCodexAuth();
+    if (!auth.ok) throw new Error(`NO_AUTH: ${auth.reason}`);
+    const remote = await fetchWhamUsage(auth.auth);
+    if (!remote.rate_limits.length) throw appServerError;
+    return {
+      provider: 'codex-http',
+      window_5h: remote.window_5h,
+      window_weekly: remote.window_weekly,
+      rate_limits: remote.rate_limits,
+      banked_resets: remote.banked_resets,
+    };
+  }
+}
+
+/**
+ * Official Grok CLI billing API — same host the Grok CLI uses.
+ * Auth: Bearer token from ~/.grok/auth.json (OIDC session key).
+ */
+async function fetchGrokRemoteQuota(home: string) {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino 不可用');
+
+  let authRaw: string;
+  try {
+    authRaw = await api.filesystem.readFile(`${home}/.grok/auth.json`);
+  } catch {
+    throw new Error('未找到 ~/.grok/auth.json，请先 grok login');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(authRaw);
+  } catch {
+    throw new Error('~/.grok/auth.json 无法解析');
+  }
+
+  const token = loadGrokAccessToken(parsed);
+  if (!token) throw new Error('~/.grok/auth.json 中没有可用 access token');
+
+  if (token.expiresAt) {
+    const exp = Date.parse(token.expiresAt);
+    if (Number.isFinite(exp) && exp < Date.now() - 30_000) {
+      throw new Error('Grok token 已过期，请在终端重新登录 grok');
+    }
+  }
+
+  const auth = { kind: 'bearer' as const, accessToken: token.token };
+  const [credits, monthly] = await Promise.all([
+    curlJson(GROK_BILLING_CREDITS_URL, auth, 'GET'),
+    curlJson(GROK_BILLING_MONTHLY_URL, auth, 'GET'),
+  ]);
+
+  if (!credits.ok && !monthly.ok) {
+    if (credits.status === 401 || monthly.status === 401) {
+      throw new Error('AUTH_EXPIRED: Grok billing 拒绝了当前 token');
+    }
+    throw new Error(`Grok billing 失败（HTTP ${credits.status || monthly.status}）`);
+  }
+
+  return parseGrokBillingResponses(
+    credits.ok ? credits.json : {},
+    monthly.ok ? monthly.json : {},
+  );
+}
+
+/**
+ * Mistral token quota (Free = monthly when headers exist):
+ * 1) Minimal chat probe → x-ratelimit-*-tokens-month / minute headers
+ * 2) Local calendar-month tokens when month limit not exposed (many Free medium pools)
+ * 3) Optional whoami plan label (often CF-blocked)
+ * 4) Optional Admin spend/rate when Admin API key works
+ */
+async function fetchMistralRemoteQuota(home: string, base: ProviderLocalUsage) {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino 不可用');
+
+  const localMonthTokens = base.month?.tokens ?? 0;
+  let planLabel = base.remote?.plan_label ?? 'API Free';
+  let apiKey: string | null = null;
+  try {
+    apiKey = extractMistralApiKey(await api.filesystem.readFile(`${home}/.vibe/.env`));
+  } catch {
+    // no key
+  }
+  if (!apiKey) {
+    if (base.remote) return base.remote;
+    throw new Error('未配置 MISTRAL_API_KEY');
+  }
+
+  let activeModel = 'mistral-small-latest';
+  try {
+    activeModel = parseVibeActiveModel(await api.filesystem.readFile(`${home}/.vibe/config.toml`));
+  } catch {
+    // default
+  }
+
+  // Official free-tier token windows live on chat response headers for the
+  // active model pool (month caps are pool-specific — never mix models).
+  // Probe burns a few tokens + RTT — cache 10 minutes per model.
+  let limits = null as ReturnType<typeof parseMistralRateLimitHeaders> | null;
+  const probeHit = mistralProbeCache
+    && mistralProbeCache.model === activeModel
+    && Date.now() - mistralProbeCache.at < MISTRAL_PROBE_TTL_MS
+    ? mistralProbeCache
+    : null;
+  if (probeHit) {
+    limits = probeHit.limits;
+  } else {
+    try {
+      const probe = await curlMistralRateLimitProbe(apiKey, activeModel);
+      if (probe.headers) {
+        limits = parseMistralRateLimitHeaders(probe.headers);
+        mistralProbeCache = { at: Date.now(), model: activeModel, limits };
+      }
+    } catch {
+      // keep local month
+    }
+  }
+
+  // Skip whoami on warm path (often CF-blocked); only try when no plan yet.
+  if (!planLabel || planLabel === 'API Free') {
+    try {
+      const who = await curlJson(
+        MISTRAL_VIBE_WHOAMI_URL,
+        { kind: 'bearer', accessToken: apiKey },
+        'GET',
+      );
+      if (who.ok) {
+        const plan = parseVibeWhoAmI(who.json);
+        if (plan) planLabel = plan.plan_label;
+      }
+    } catch {
+      // optional
+    }
+  }
+
+  let remote = buildMistralTokenQuota({
+    localMonthTokens,
+    limits,
+    planLabel,
+    model: activeModel,
+  });
+
+  // Admin API only when probe didn't give month limits (regular studio keys often 401).
+  if (!(limits?.monthLimit && limits.monthLimit > 0)) {
+    try {
+      const [spend, rate] = await Promise.all([
+        curlJsonXApiKey(MISTRAL_ADMIN_SPEND_URL, apiKey),
+        curlJsonXApiKey(MISTRAL_ADMIN_RATE_URL, apiKey),
+      ]);
+      if (spend.ok || rate.ok) {
+        remote = parseMistralAdminLimits(
+          spend.ok ? spend.json : {},
+          rate.ok ? rate.json : {},
+          remote,
+        );
+      }
+    } catch {
+      // optional
+    }
+  }
+
+  return remote;
+}
+
+/** Tiny chat completion to read Free-tier x-ratelimit-* token headers. */
+async function curlMistralRateLimitProbe(
+  apiKey: string,
+  model: string,
+): Promise<{ status: number; headers: string }> {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino API unavailable');
+
+  const headerPath = await writeTempScript('codex-ui-mistral-hdr', '', '.hdr');
+  const requestBody = {
+    model,
+    messages: [{ role: 'user', content: '.' }],
+    max_tokens: 1,
+  };
+  const config = [
+    `url = ${curlConfigQuote(MISTRAL_CHAT_URL)}`,
+    'request = "POST"',
+    'silent',
+    'show-error',
+    'max-time = 15',
+    // Discard body; we only need rate-limit headers.
+    'output = "/dev/null"',
+    `dump-header = ${curlConfigQuote(headerPath)}`,
+    'write-out = "%{http_code}"',
+    `header = ${curlConfigQuote(`Authorization: Bearer ${apiKey}`)}`,
+    'header = "accept: application/json"',
+    'header = "content-type: application/json"',
+    'header = "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"',
+    `data = ${curlConfigQuote(JSON.stringify(requestBody))}`,
+  ].join('\n');
+
+  const curlBin = await resolveBin('curl') ?? 'curl';
+  const cfgPath = await writeTempScript('codex-ui-mistral-probe', config, '.conf');
+  let out: { stdOut: string; stdErr: string; exitCode: number };
+  try {
+    try {
+      await api.os.execCommand(`chmod 600 ${shellQuote(cfgPath)}`);
+    } catch {
+      // ignore
+    }
+    out = await api.os.execCommand(`${shellQuote(curlBin)} -K ${shellQuote(cfgPath)}`);
+  } finally {
+    await safeRemove(cfgPath);
+  }
+
+  const status = Number(out.stdOut.trim()) || (out.exitCode === 0 ? 200 : 0);
+
+  let headers = '';
+  try {
+    headers = await api.filesystem.readFile(headerPath);
+  } catch {
+    headers = '';
+  } finally {
+    await safeRemove(headerPath);
+  }
+
+  return { status, headers };
+}
+
+/** Admin API uses x-api-key header (not ChatGPT Bearer shape). */
+async function curlJsonXApiKey(
+  url: string,
+  apiKey: string,
+): Promise<{ ok: boolean; status: number; json: unknown; detail?: string }> {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino API unavailable');
+
+  const config = [
+    `url = ${curlConfigQuote(url)}`,
+    'silent',
+    'show-error',
+    'max-time = 12',
+    'write-out = "\\n%{http_code}"',
+    'header = "accept: application/json"',
+    `header = ${curlConfigQuote(`x-api-key: ${apiKey}`)}`,
+    'header = "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"',
+  ].join('\n');
+
+  const curlBin = await resolveBin('curl') ?? 'curl';
+  const cfgPath = await writeTempScript('codex-ui-mistral', config, '.conf');
+  let out: { stdOut: string; stdErr: string; exitCode: number };
+  try {
+    try {
+      await api.os.execCommand(`chmod 600 ${shellQuote(cfgPath)}`);
+    } catch {
+      // ignore
+    }
+    out = await api.os.execCommand(`${shellQuote(curlBin)} -K ${shellQuote(cfgPath)}`);
+  } finally {
+    await safeRemove(cfgPath);
+  }
+
+  const responseText = out.stdOut.trimEnd();
+  const splitAt = responseText.lastIndexOf('\n');
+  const payload = splitAt >= 0 ? responseText.slice(0, splitAt) : responseText;
+  const status = splitAt >= 0 ? Number(responseText.slice(splitAt + 1)) : out.exitCode === 0 ? 200 : 0;
+
+  let json: unknown = null;
+  let detail: string | undefined;
+  const trimmed = payload.trim();
+  if (trimmed) {
+    try {
+      json = JSON.parse(trimmed);
+    } catch {
+      detail = trimmed.startsWith('<') ? '收到 HTML 响应' : trimmed.slice(0, 160);
+    }
+  }
+
+  return {
+    ok: status >= 200 && status < 300 && json !== null,
+    status: Number.isFinite(status) ? status : 0,
+    json,
+    detail,
   };
 }
 
@@ -465,31 +987,105 @@ async function loadCodexAuth(): Promise<CodexAuthResult> {
   }
 }
 
+/**
+ * HTTP fallback when app-server is unavailable.
+ * Prefer /api/codex/usage, but Cloudflare often returns HTML 403 for that path
+ * even with a valid CLI token — always try /wham/usage next. Only treat real
+ * HTTP 401 JSON auth failures as token expiry.
+ */
 async function fetchWhamUsage(auth: Auth): Promise<Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'>> {
-  const codex = await curlJson(CODEX_USAGE_URL, auth, 'GET');
-  if (codex.ok) {
-    const parsed = parseCodexUsage(codex.json);
+  const attempts: Array<{
+    url: string;
+    parse: (json: unknown) => Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> | null;
+  }> = [
+    {
+      url: CODEX_USAGE_URL,
+      parse: (json) => parseCodexUsage(json),
+    },
+    {
+      url: WHAM_USAGE_URL,
+      parse: (json) => parseWhamResponse(json),
+    },
+  ];
+
+  let lastStatus = 0;
+  let sawUnauthorized = false;
+  let lastDetail = '';
+
+  for (const attempt of attempts) {
+    const res = await curlJson(attempt.url, auth, 'GET');
+    lastStatus = res.status;
+    lastDetail = res.detail ?? '';
+
+    if (res.status === 401 || isUnauthorizedBody(res.json, res.detail)) {
+      sawUnauthorized = true;
+      continue;
+    }
+
+    // Cloudflare / WAF HTML 403 must not abort the whole chain.
+    if (!res.ok) continue;
+
+    const parsed = attempt.parse(res.json);
+    if (parsed && hasUsableRemoteWindows(parsed)) return parsed;
     if (parsed) return parsed;
-    throw new Error('PARSE_ERROR: Codex usage 响应格式无法识别');
-  }
-  if (codex.status !== 404) {
-    throw new Error(`usage 返回 HTTP ${codex.status}`);
   }
 
-  const wham = await curlJson(WHAM_USAGE_URL, auth, 'GET');
-  if (!wham.ok) {
-    throw new Error(`usage 返回 HTTP ${wham.status}`);
+  if (sawUnauthorized) {
+    throw new Error('AUTH_EXPIRED: 服务端拒绝了当前 access token，请重新运行 codex login');
   }
-  return parseWhamResponse(wham.json);
+  throw new Error(
+    lastDetail
+      ? `usage 请求失败（HTTP ${lastStatus}）：${lastDetail}`
+      : `usage 请求失败（HTTP ${lastStatus || 'unknown'}）`,
+  );
+}
+
+function hasUsableRemoteWindows(
+  remote: Pick<UsageSnapshot, 'window_5h' | 'window_weekly'>,
+): boolean {
+  return !isWindowMissing(remote.window_5h) || !isWindowMissing(remote.window_weekly);
+}
+
+function isUnauthorizedBody(json: unknown, detail?: string): boolean {
+  const text = `${detail ?? ''} ${typeof json === 'string' ? json : JSON.stringify(json ?? {})}`.toLowerCase();
+  if (!text.trim()) return false;
+  // HTML challenge pages are not auth failures.
+  if (text.includes('<html') || text.includes('cloudflare') || text.includes('just a moment')) {
+    return false;
+  }
+  return (
+    text.includes('unauthorized')
+    || text.includes('unauthenticated')
+    || text.includes('invalid_token')
+    || text.includes('token_expired')
+    || text.includes('access token')
+    || text.includes('"code":"token_expired"')
+  );
+}
+
+/** Map transport errors without treating WAF 403 as "token expired". */
+function classifyRemoteError(message: string): string {
+  if (message.startsWith('NO_AUTH:')) return 'NO_AUTH';
+  if (message.startsWith('PARSE_ERROR:')) return 'PARSE_ERROR';
+  if (message.startsWith('AUTH_EXPIRED:') || message.startsWith('COOKIE_EXPIRED:')) {
+    return 'COOKIE_EXPIRED';
+  }
+  // Bare "403" used to match Cloudflare blocks and false-positive as expired.
+  if (/\b401\b/.test(message) && /auth|鉴权|unauthor|token/i.test(message)) {
+    return 'COOKIE_EXPIRED';
+  }
+  return 'NETWORK_ERROR';
 }
 
 async function callCodexAppServer(method: string, params: unknown): Promise<unknown> {
   const api = nativeApi();
   if (!api) throw new Error('Codex app-server 需要 Neutralino 运行时');
 
-  const request = JSON.stringify({ method, id: 2, params });
-  const bridge = `
+  // Write bridge to a temp file so the request JSON is NOT visible in `ps`
+  // via `node -e '...'` argv (audit F1).
+  const tmpPath = await writeTempScript('codex-ui-app-server', `
 const { spawn } = require('node:child_process');
+const request = ${JSON.stringify({ method, id: 2, params })};
 const child = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'pipe'] });
 let buffer = '';
 let stderr = '';
@@ -501,7 +1097,7 @@ function finish(code, message) {
   settled = true;
   clearTimeout(timer);
   if (message) (code === 0 ? process.stdout : process.stderr).write(message);
-  child.kill();
+  try { child.kill(); } catch {}
   setTimeout(() => process.exit(code), 50);
 }
 child.on('error', error => finish(1, error.message));
@@ -517,7 +1113,7 @@ child.stdout.on('data', chunk => {
     try { message = JSON.parse(line); } catch { continue; }
     if (message.id === 1) {
       send({ method: 'initialized', params: {} });
-      send(${request});
+      send(request);
     } else if (message.id === 2) {
       if (message.error) finish(1, JSON.stringify(message.error));
       else finish(0, JSON.stringify(message.result));
@@ -534,16 +1130,22 @@ send({
     clientInfo: { name: 'codex-ui', title: 'Codex UI', version: '0.1.0' },
     capabilities: null,
   },
-});`;
+});
+`);
 
-  const out = await api.os.execCommand(`node -e ${shellQuote(bridge)}`);
-  if (out.exitCode !== 0 || !out.stdOut.trim()) {
-    throw new Error(out.stdErr.trim() || 'Codex app-server 调用失败');
-  }
   try {
-    return JSON.parse(out.stdOut);
-  } catch {
-    throw new Error('PARSE_ERROR: Codex app-server 返回了无效 JSON');
+    const nodeBin = await resolveBin('node') ?? 'node';
+    const out = await api.os.execCommand(`${shellQuote(nodeBin)} ${shellQuote(tmpPath)}`);
+    if (out.exitCode !== 0 || !out.stdOut.trim()) {
+      throw new Error(out.stdErr.trim() || 'Codex app-server 调用失败');
+    }
+    try {
+      return JSON.parse(out.stdOut);
+    } catch {
+      throw new Error('PARSE_ERROR: Codex app-server 返回了无效 JSON');
+    }
+  } finally {
+    await safeRemove(tmpPath);
   }
 }
 
@@ -577,12 +1179,19 @@ function parseResetOutcome(value: unknown): ResetOutcome {
     : 'failed';
 }
 
-async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', requestBody?: unknown): Promise<{ ok: boolean; status: number; json: unknown }> {
+async function curlJson(
+  url: string,
+  auth: Auth,
+  method: 'GET' | 'POST',
+  requestBody?: unknown,
+): Promise<{ ok: boolean; status: number; json: unknown; detail?: string }> {
   const api = nativeApi();
   if (!api) {
     throw new Error('Neutralino API unavailable');
   }
 
+  // Prefer temp config file (0600 via umask) so the Bearer token is not kept in
+  // long-lived process argv; stdin is also used as a second channel if write fails.
   const headers = [
     `header = ${curlConfigQuote(`Authorization: Bearer ${auth.accessToken}`)}`,
     `header = ${curlConfigQuote('OAI-Product-Sku: codex')}`,
@@ -604,78 +1213,91 @@ async function curlJson(url: string, auth: Auth, method: 'GET' | 'POST', request
     ...headers,
   ].filter(Boolean).join('\n');
 
-  const out = await api.os.execCommand('curl -K -', { stdIn: config });
+  const curlBin = await resolveBin('curl') ?? 'curl';
+  let out: { stdOut: string; stdErr: string; exitCode: number };
+  const cfgPath = await writeTempScript('codex-ui-curl', config, '.conf');
+  try {
+    // Restrict permissions best-effort (Neutralino has no chmod API).
+    try {
+      await api.os.execCommand(`chmod 600 ${shellQuote(cfgPath)}`);
+    } catch {
+      // ignore
+    }
+    out = await api.os.execCommand(`${shellQuote(curlBin)} -K ${shellQuote(cfgPath)}`);
+  } finally {
+    await safeRemove(cfgPath);
+  }
+
   const responseText = out.stdOut.trimEnd();
   const splitAt = responseText.lastIndexOf('\n');
   const payload = splitAt >= 0 ? responseText.slice(0, splitAt) : responseText;
   const status = splitAt >= 0 ? Number(responseText.slice(splitAt + 1)) : out.exitCode === 0 ? 200 : 0;
 
-  if (status === 401 || status === 403) {
-    throw new Error(`鉴权失败（${status}）`);
-  }
-  if (out.exitCode !== 0 && status === 0) {
+  if (out.exitCode !== 0 && (!Number.isFinite(status) || status === 0)) {
     throw new Error(out.stdErr || 'curl 请求失败');
   }
 
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: payload ? JSON.parse(payload) : null,
-  };
-}
-
-async function parseLocalUsage(): Promise<{ today: PeriodUsage; month: PeriodUsage }> {
-  const api = nativeApi();
-  if (!api) return { today: { ...EMPTY_PERIOD }, month: { ...EMPTY_PERIOD } };
-
-  const today = new Date();
-  const from = new Date(today.getFullYear(), today.getMonth(), 1);
-  const monthMap = new Map<string, { input: number; cached: number; output: number }>();
-  const todayMap = new Map<string, { input: number; cached: number; output: number }>();
-  let monthMessages = 0;
-  let monthTokens = 0;
-  let todayMessages = 0;
-  let todayTokens = 0;
-  const activeFiles = new Set<string>();
-
-  for (const day of daysBetween(from, today)) {
-    const isToday = day.getFullYear() === today.getFullYear()
-      && day.getMonth() === today.getMonth()
-      && day.getDate() === today.getDate();
-    for (const file of await rolloutFilesForDay(day)) {
-      activeFiles.add(file);
-      try {
-        const stats = await api.filesystem.getStats(file);
-        const cachedFile = rolloutCache.get(file);
-        let parsed: ReturnType<typeof parseRolloutFile>;
-        if (!cachedFile || cachedFile.modifiedAt !== stats.modifiedAt || cachedFile.size !== stats.size) {
-          parsed = parseRolloutFile(await api.filesystem.readFile(file));
-          rolloutCache.set(file, { modifiedAt: stats.modifiedAt, size: stats.size, parsed });
-        } else {
-          parsed = cachedFile.parsed;
-        }
-        monthMessages += parsed.messages;
-        monthTokens += parsed.tokens;
-        mergeModelMap(monthMap, parsed.modelMap);
-        if (isToday) {
-          todayMessages += parsed.messages;
-          todayTokens += parsed.tokens;
-          mergeModelMap(todayMap, parsed.modelMap);
-        }
-      } catch {
-        // Ignore unreadable/in-progress session files.
-      }
+  // Never throw on 401/403 here — callers decide. Cloudflare often answers
+  // /api/codex/usage with HTML 403 while /wham/usage succeeds with the same token.
+  let json: unknown = null;
+  let detail: string | undefined;
+  const trimmed = payload.trim();
+  if (trimmed) {
+    try {
+      json = JSON.parse(trimmed);
+    } catch {
+      detail = trimmed.startsWith('<')
+        ? '收到 HTML 响应（可能是 Cloudflare 拦截）'
+        : trimmed.slice(0, 160);
+      json = null;
     }
   }
 
-  for (const file of rolloutCache.keys()) {
-    if (!activeFiles.has(file)) rolloutCache.delete(file);
-  }
-
   return {
-    today: buildPeriodUsage(todayMessages, todayTokens, todayMap),
-    month: buildPeriodUsage(monthMessages, monthTokens, monthMap),
+    ok: status >= 200 && status < 300 && json !== null,
+    status: Number.isFinite(status) ? status : 0,
+    json,
+    detail,
   };
+}
+
+async function writeTempScript(prefix: string, content: string, ext = '.js'): Promise<string> {
+  const api = nativeApi();
+  if (!api) throw new Error('Neutralino API unavailable');
+  const tmpDir = await api.os.getPath('temp');
+  const path = `${tmpDir}/${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`;
+  await api.filesystem.writeFile(path, content);
+  return path;
+}
+
+async function safeRemove(path: string): Promise<void> {
+  try {
+    await nativeApi()?.filesystem.removeFile(path);
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+const binCache = new Map<string, string | null>();
+
+/** Resolve absolute path for a binary to reduce PATH hijack surface. */
+async function resolveBin(name: string): Promise<string | null> {
+  if (binCache.has(name)) return binCache.get(name) ?? null;
+  const api = nativeApi();
+  if (!api) {
+    binCache.set(name, null);
+    return null;
+  }
+  try {
+    const out = await api.os.execCommand(`command -v ${shellQuote(name)}`);
+    const path = out.stdOut.trim().split('\n')[0]?.trim() || '';
+    const resolved = out.exitCode === 0 && path.startsWith('/') ? path : null;
+    binCache.set(name, resolved);
+    return resolved;
+  } catch {
+    binCache.set(name, null);
+    return null;
+  }
 }
 
 async function parseLatestRateLimits(): Promise<{ primary: WindowUsage; secondary: WindowUsage } | null> {
@@ -782,15 +1404,6 @@ async function storageRecord<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
-function* daysBetween(from: Date, to: Date): Generator<Date> {
-  const day = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
-  while (day <= end) {
-    yield new Date(day);
-    day.setDate(day.getDate() + 1);
-  }
-}
-
 function curlConfigQuote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
 }
@@ -810,3 +1423,6 @@ function desktopExecQuote(value: string): string {
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
+
+// Note: execCommand is only used for readlink, chmod, command -v, node bridge, curl.
+// Prefer temp files over node -e / curl stdin for secrets (see callCodexAppServer / curlJson).

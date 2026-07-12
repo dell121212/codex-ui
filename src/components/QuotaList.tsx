@@ -1,7 +1,10 @@
-import type { RateLimitBucket, WindowUsage } from '../types';
+import type { ModelUsage, RateLimitBucket, WindowUsage } from '../types';
+import { rankRateLimitBuckets, usageHeatColor } from '../services/usageLogic';
 
 interface Props {
   buckets?: RateLimitBucket[];
+  /** Models with local token captures — used to pin matching quotas first. */
+  usedModels?: ModelUsage[];
 }
 
 function bucketName(bucket: RateLimitBucket): string {
@@ -32,12 +35,6 @@ function resetText(window: WindowUsage): string {
   });
 }
 
-function color(percent: number): string {
-  if (percent >= 90) return 'var(--red)';
-  if (percent >= 75) return 'var(--orange)';
-  return 'var(--green)';
-}
-
 function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: string }) {
   if (!window.limit) return null;
   return (
@@ -49,7 +46,7 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
       <div className="progress-bg">
         <div
           className="progress-fill"
-          style={{ width: `${window.percent}%`, background: color(window.percent) }}
+          style={{ width: `${window.percent}%`, background: usageHeatColor(window.percent) }}
         />
       </div>
       {window.reset_at_unix > 0 && <div className="quota-reset">重置于 {resetText(window)}</div>}
@@ -57,18 +54,51 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
   );
 }
 
-export default function QuotaList({ buckets }: Props) {
-  const extraBuckets = buckets?.filter((bucket) => bucket.id.toLowerCase() !== 'codex') ?? [];
+export default function QuotaList({ buckets, usedModels }: Props) {
+  const usedIds = (usedModels ?? [])
+    .filter((m) => m.input_tokens + m.output_tokens > 0)
+    .map((m) => m.model);
+
+  const extraBuckets = rankRateLimitBuckets(
+    (buckets ?? []).filter((bucket) => bucket.id.toLowerCase() !== 'codex'),
+    usedIds,
+  );
+
   if (!extraBuckets.length) return null;
+
+  const usedSet = new Set(usedIds.map((id) => id.toLowerCase()));
+  const isUsed = (bucket: RateLimitBucket) => {
+    const id = bucket.id.toLowerCase();
+    const name = (bucket.name ?? '').toLowerCase();
+    for (const model of usedSet) {
+      if (
+        model === id
+        || model.startsWith(`${id}-`)
+        || id.startsWith(`${model}-`)
+        || model.includes(id)
+        || id.includes(model)
+        || (name && (model.includes(name) || name.includes(model)))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   return (
     <section className="quota-section" aria-label="独立模型额度">
-      <div className="section-title">独立模型额度</div>
+      <div className="section-title">独立模型额度 · 已用优先</div>
       {extraBuckets.map((bucket) => (
-        <div className="card quota-card" key={bucket.id}>
+        <div
+          className={`card quota-card${isUsed(bucket) ? ' quota-card--used' : ''}`}
+          key={bucket.id}
+        >
           <div className="quota-title-row">
             <span className="quota-title">{bucketName(bucket)}</span>
-            <span className="quota-id">{bucket.id}</span>
+            <span className="quota-id">
+              {isUsed(bucket) ? '已抓取 · ' : ''}
+              {bucket.id}
+            </span>
           </div>
           <QuotaWindow window={bucket.primary} fallback="短窗口" />
           <QuotaWindow window={bucket.secondary} fallback="长窗口" />

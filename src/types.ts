@@ -56,14 +56,71 @@ export interface SpendInfo {
   pricing_as_of: string;
 }
 
+/** Coding agents / companies supported for local capture + board. */
+export type AgentId =
+  | 'codex'
+  | 'claude'
+  | 'gemini'
+  | 'kimi'
+  | 'cursor'
+  | 'copilot'
+  | 'opencode'
+  | 'grok'
+  | 'minimax'
+  | 'glm'
+  | 'mistral'
+  | 'windsurf'
+  | 'other';
+
+/** Remote subscription / credit window for a company (e.g. Grok weekly credits). */
+export interface ProviderRemoteQuota {
+  source: string;
+  /** Primary ring — weekly credits (Grok) or monthly tokens (Mistral Free). */
+  primary: WindowUsage;
+  /** Secondary — product split or minute TPM for Mistral. */
+  secondary: WindowUsage;
+  products: Array<{ product: string; percent: number }>;
+  monthly?: {
+    used: number;
+    limit: number;
+    period_start?: string;
+    period_end?: string;
+  };
+  /** Human plan label when known (Vibe Free / Pro / API Scale …). */
+  plan_label?: string;
+  /** Primary metric caption override (e.g. 月 Token). */
+  primary_label?: string;
+  fetched_at: string;
+  error?: string;
+}
+
+/** Per-company local session token capture (Codex / Grok / …). */
+export interface ProviderLocalUsage {
+  provider: AgentId;
+  /** Local data directory found */
+  available: boolean;
+  /** At least one session with tokens this month/today */
+  hasTokens: boolean;
+  authOk?: boolean;
+  authPath?: string;
+  lastActiveAt?: string;
+  today: PeriodUsage;
+  month: PeriodUsage;
+  /** Official remote quota when the company exposes an API (Grok billing). */
+  remote?: ProviderRemoteQuota;
+}
+
 export interface UsageSnapshot {
   fetched_at: string;
   provider: string;
   window_5h: WindowUsage;
   window_weekly: WindowUsage;
   rate_limits: RateLimitBucket[];
+  /** Codex local usage (backward compatible). */
   today_local: PeriodUsage;
   month_local: PeriodUsage;
+  /** Multi-company local capture. */
+  local_providers: ProviderLocalUsage[];
   banked_resets: BankedResets;
   spend: SpendInfo;
   error?: string;
@@ -83,3 +140,40 @@ export interface AuthStatus {
   auth_path?: string;
   message: string;
 }
+
+// ─── Multi-agent Kanban board ────────────────────────────────────────────────
+// Column model: Backlog → In Progress → Review → Done
+
+export type BoardColumnId = 'backlog' | 'in_progress' | 'review' | 'done';
+export type BoardPriority = 'critical' | 'high' | 'medium' | 'low';
+
+export interface BoardTask {
+  id: string;
+  title: string;
+  description: string;
+  columnId: BoardColumnId;
+  priority: BoardPriority;
+  /** Coding agent / provider assigned to this task */
+  agentType: AgentId;
+  /** Optional repo / workspace path for the task */
+  repoPath?: string;
+  /** Optional branch name */
+  branchName?: string;
+  /** Soft stop / success condition (maps to Codex /goal or peer prompts) */
+  successCheck?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  archived?: boolean;
+  order: number;
+}
+
+export interface BoardColumnMeta {
+  id: BoardColumnId;
+  title: string;
+  hint: string;
+  color: string;
+}
+
+export type AppView = 'usage' | 'board';

@@ -59,6 +59,8 @@ export const useStore = create<Store>((set) => ({
 
   fetchInitial: async () => {
     try {
+      // getUsage paints disk/memory cache immediately and may kick a background refresh.
+      // Live updates after that arrive via subscribe() → onUsageUpdated.
       const data = await getUsage();
       set({
         data,
@@ -77,20 +79,21 @@ export const useStore = create<Store>((set) => ({
   refresh: async () => {
     set({ isRefreshing: true });
     try {
+      // Phase A (local) + phase B (remote) both publish via listeners; final return is phase B.
       const data = await refreshUsage();
       set({
         data,
         lastUpdated: new Date(),
         error: data.error ?? null,
         errorKind: data.error_kind ?? null,
+        isRefreshing: false,
       });
     } catch (e) {
       set({
         error: e instanceof Error ? e.message : String(e),
         errorKind: 'NETWORK_ERROR',
+        isRefreshing: false,
       });
-    } finally {
-      set({ isRefreshing: false });
     }
   },
 

@@ -25,14 +25,14 @@ const BANNERS: Record<string, BannerCfg> = {
     border: 'rgba(255,159,10,.30)',
     color: '#ff9f0a',
     clickable: true,
-    msg: 'Codex 登录态已过期。请重新运行 codex login，程序会自动刷新 token',
+    msg: 'Codex access token 已被服务端拒绝。请重新运行 codex login，程序会自动读取新 token',
   },
   NETWORK_ERROR: {
     bg: 'rgba(255,69,58,.10)',
     border: 'rgba(255,69,58,.25)',
     color: '#ff453a',
     clickable: false,
-    msg: '✗ 网络错误，请检查连接后刷新',
+    msg: '✗ 额度接口暂时不可用（网络 / 防火墙），本地会话与 token 读取仍可用',
   },
   PARSE_ERROR: {
     bg: 'rgba(255,69,58,.10)',

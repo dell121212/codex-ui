@@ -1,20 +1,17 @@
 import type { WindowUsage } from '../types';
+import { usageHeatColor } from '../services/usageLogic';
 
 interface Props {
   window?: WindowUsage;
+  /** Override default "5 小时窗口" label (e.g. Grok 周额度). */
+  label?: string;
 }
 
-const R         = 36;
-const CIRC      = 2 * Math.PI * R;       // ≈ 226.2
-const CX        = 46;
-const CY        = 46;
-const SVG_SIZE  = 92;
-
-function ringColor(pct: number): string {
-  if (pct >= 90) return '#ff453a';   // red
-  if (pct >= 70) return '#ff9f0a';   // orange
-  return '#0a84ff';                   // blue
-}
+const R         = 40;
+const CIRC      = 2 * Math.PI * R;
+const CX        = 50;
+const CY        = 50;
+const SVG_SIZE  = 100;
 
 function fmtDuration(secs: number): string {
   if (secs <= 0) return '现在';
@@ -30,44 +27,41 @@ function fmtNum(n: number): string {
   return String(n);
 }
 
-export default function RingCard({ window: w }: Props) {
+export default function RingCard({ window: w, label = '5 小时' }: Props) {
   const pct    = w?.percent ?? 0;
   const offset = CIRC * (1 - pct / 100);
-  const color  = ringColor(pct);
+  const color  = usageHeatColor(pct);
 
   return (
     <div className="card ring-card">
-      <div className="card-label">5 小时窗口</div>
+      <div className="card-label">{label}</div>
 
       <svg
         width={SVG_SIZE}
         height={SVG_SIZE}
         viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
-        aria-label={`5 小时窗口已使用 ${Math.round(pct)}%`}
+        aria-label={`${label}已使用 ${Math.round(pct)}%`}
         role="img"
       >
-        {/* Track */}
         <circle
           cx={CX} cy={CY} r={R}
           fill="none"
-          stroke="var(--sep)"
-          strokeWidth="7"
+          stroke="rgba(120,120,128,0.32)"
+          strokeWidth="8"
         />
-        {/* Progress arc */}
         <circle
           cx={CX} cy={CY} r={R}
           fill="none"
           stroke={color}
-          strokeWidth="7"
+          strokeWidth="8"
           strokeLinecap="round"
           strokeDasharray={CIRC}
           strokeDashoffset={offset}
           transform={`rotate(-90, ${CX}, ${CY})`}
-          style={{ transition: 'stroke-dashoffset 700ms ease, stroke 400ms ease' }}
+          style={{ transition: 'stroke-dashoffset 700ms cubic-bezier(.2,.8,.2,1), stroke 400ms ease' }}
         />
-        {/* Centre text */}
         <text
-          x={CX} y={CY - 5}
+          x={CX} y={CY - 4}
           textAnchor="middle"
           dominantBaseline="middle"
           className="ring-pct"
@@ -75,7 +69,7 @@ export default function RingCard({ window: w }: Props) {
           {Math.round(pct)}%
         </text>
         <text
-          x={CX} y={CY + 11}
+          x={CX} y={CY + 14}
           textAnchor="middle"
           className="ring-sub"
         >
@@ -89,10 +83,12 @@ export default function RingCard({ window: w }: Props) {
           : '—'}
       </div>
 
-      <div className="ring-stats">
-        {w?.used != null ? fmtNum(w.used) : '—'}
-        {w?.limit ? ` / ${fmtNum(w.limit)}` : ''}
-      </div>
+      {(w?.used != null || w?.limit) && (
+        <div className="ring-stats">
+          {w?.used != null ? fmtNum(w.used) : '—'}
+          {w?.limit ? ` / ${fmtNum(w.limit)}` : ''}
+        </div>
+      )}
     </div>
   );
 }

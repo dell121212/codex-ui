@@ -6,6 +6,8 @@ import {
   EMPTY_WINDOW,
   enrichWithCosts,
   isWindowMissing,
+  mostConstrainedCodexWindow,
+  normalizeCodexWindows,
   parseCodexUsage,
   parseLocalLimitWindow,
   parseRolloutFile,
@@ -125,6 +127,24 @@ describe('local rate-limit fallback parsing', () => {
     expect(coalesceWindow(reset, stale).percent).toBe(0);
     expect(coalesceWindow(EMPTY_WINDOW, stale).percent).toBe(88);
   });
+
+  it('promotes a weekly-only primary window instead of mislabeling it as 5h', () => {
+    const weeklyOnly: WindowUsage = {
+      used: 37,
+      limit: 100,
+      percent: 37,
+      window_duration_mins: 10_080,
+      reset_at_unix: 1_800_086_400,
+      remaining_secs: 86_400,
+    };
+
+    const normalized = normalizeCodexWindows(weeklyOnly, null);
+
+    expect(isWindowMissing(normalized.window_5h)).toBe(true);
+    expect(normalized.window_weekly).toEqual(weeklyOnly);
+    expect(mostConstrainedCodexWindow(normalized.window_5h, normalized.window_weekly))
+      .toMatchObject({ label: '周额度', window: { percent: 37 } });
+  });
 });
 
 describe('remote usage response parsing', () => {
@@ -160,6 +180,28 @@ describe('remote usage response parsing', () => {
     expect(parsed?.window_5h.percent).toBe(25);
     expect(parsed?.window_weekly.percent).toBe(2);
     expect(parsed?.banked_resets.available).toBeNull();
+  });
+
+  it('parses the new single weekly window shape', () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 86_400;
+    const parsed = parseCodexUsage({
+      rateLimits: {
+        limitId: 'codex',
+        primary: {
+          usedPercent: 34,
+          windowDurationMins: 10_080,
+          resetsAt: resetAt,
+        },
+        secondary: null,
+      },
+    });
+
+    expect(parsed?.window_weekly).toMatchObject({
+      percent: 34,
+      window_duration_mins: 10_080,
+      reset_at_unix: resetAt,
+    });
+    expect(isWindowMissing(parsed?.window_5h)).toBe(true);
   });
 
   it('parses Codex app-server reset credit summary', () => {

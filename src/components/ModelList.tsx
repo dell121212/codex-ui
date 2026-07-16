@@ -5,6 +5,7 @@ interface Props {
   models?: ModelUsage[];
   monthModels?: ModelUsage[];
   title?: string;
+  preferMonth?: boolean;
 }
 
 function shortName(name: string): string {
@@ -23,7 +24,12 @@ function fmtTok(n: number): string {
 
 const BAR_COLORS = ['#0a84ff', '#5e5ce6', '#30d158', '#64d2ff', '#ff9f0a'];
 
-function modelsWithTokens(today?: ModelUsage[], month?: ModelUsage[]): ModelUsage[] {
+function modelsWithTokens(
+  today?: ModelUsage[],
+  month?: ModelUsage[],
+  preferMonth = false,
+): ModelUsage[] {
+  if (preferMonth && month?.length) return rankModelsByTokens(month);
   const todayRanked = rankModelsByTokens(today ?? []);
   if (!month?.length) return todayRanked;
 
@@ -32,8 +38,8 @@ function modelsWithTokens(today?: ModelUsage[], month?: ModelUsage[]): ModelUsag
   return [...todayRanked, ...monthOnly];
 }
 
-export default function ModelList({ models, monthModels, title }: Props) {
-  const ranked = modelsWithTokens(models, monthModels);
+export default function ModelList({ models, monthModels, title, preferMonth = false }: Props) {
+  const ranked = modelsWithTokens(models, monthModels, preferMonth);
   const label = title ?? '使用量排名';
 
   if (!ranked.length) {

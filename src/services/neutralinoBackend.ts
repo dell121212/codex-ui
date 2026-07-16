@@ -14,6 +14,8 @@ import {
   computeSpend,
   EMPTY_WINDOW,
   isWindowMissing,
+  mostConstrainedCodexWindow,
+  normalizeCodexWindows,
   parseCodexUsage,
   parseJson,
   parseLocalLimitWindow,
@@ -151,7 +153,7 @@ export function initNeutralinoBackend() {
 
   void api.window.show();
   void api.window.focus();
-  void configureTray(0, 0);
+  void configureTray(0, 0, '额度');
   // Warm disk cache into memory as early as possible (non-blocking).
   void ensureMemoryCache().then(() => {
     if (cached) publishSnapshot(cached.snapshot);
@@ -359,16 +361,6 @@ async function currentExecutablePath(): Promise<string> {
   return executable;
 }
 
-export async function hideWindow(): Promise<void> {
-  const api = nativeApi();
-  if (!api) return;
-  try {
-    await api.window.hide();
-  } catch {
-    await api.window.minimize();
-  }
-}
-
 export async function quitApp(): Promise<void> {
   await nativeApi()?.app.exit();
 }
@@ -455,12 +447,16 @@ async function fetchSnapshot(
 
   // Local JSONL is a last-resort gap filler only.
   const localLimits = await parseLatestRateLimits();
-  if (localLimits) {
-    if (!remoteLimitsOk || isWindowMissing(window_5h)) {
-      window_5h = coalesceWindow(window_5h, localLimits.primary);
+  // A successful remote read with one missing lane is authoritative: newer
+  // accounts can legitimately expose only the weekly window. Do not resurrect
+  // an old short window from stale session JSONL in that case.
+  if (localLimits && !remoteLimitsOk) {
+    const normalizedLocal = normalizeCodexWindows(localLimits.primary, localLimits.secondary);
+    if (isWindowMissing(window_5h)) {
+      window_5h = coalesceWindow(window_5h, normalizedLocal.window_5h);
     }
-    if (!remoteLimitsOk || isWindowMissing(window_weekly)) {
-      window_weekly = coalesceWindow(window_weekly, localLimits.secondary);
+    if (isWindowMissing(window_weekly)) {
+      window_weekly = coalesceWindow(window_weekly, normalizedLocal.window_weekly);
     }
     if (!rate_limits.length && (!isWindowMissing(window_5h) || !isWindowMissing(window_weekly))) {
       rate_limits = [{
@@ -897,33 +893,36 @@ async function curlJsonXApiKey(
 
 async function afterSnapshot(snapshot: UsageSnapshot) {
   const settings = await loadSettings();
-  await configureTray(snapshot.window_5h.percent, snapshot.banked_resets.available ?? 0);
+  const constrained = mostConstrainedCodexWindow(snapshot.window_5h, snapshot.window_weekly);
+  const percent = constrained?.window.percent ?? 0;
+  const label = constrained?.label ?? '额度';
+  await configureTray(percent, snapshot.banked_resets.available ?? 0, label);
 
   const shouldNotify =
     settings.notify_at_90_pct &&
     !snapshot.error_kind &&
-    snapshot.window_5h.percent >= 90 &&
+    percent >= 90 &&
     !quotaAlertActive;
 
-  if (snapshot.window_5h.percent < 85 || snapshot.error_kind) {
+  if (percent < 85 || snapshot.error_kind) {
     quotaAlertActive = false;
   } else if (shouldNotify) {
     quotaAlertActive = true;
   }
 
   if (shouldNotify) {
-    await nativeApi()?.os.showNotification('Codex 用量提醒', `5 小时窗口已使用 ${snapshot.window_5h.percent.toFixed(0)}%`, 'WARNING');
+    await nativeApi()?.os.showNotification('Codex 用量提醒', `${label}已使用 ${percent.toFixed(0)}%`, 'WARNING');
   }
 }
 
-async function configureTray(percent: number, resets: number) {
+async function configureTray(percent: number, resets: number, label: string) {
   const api = nativeApi();
   if (!api) return;
   try {
     await api.os.setTray({
       icon: '/icons/tray.png',
       menuItems: [
-        { id: 'status', text: `5h ${percent.toFixed(0)}% · reset ${resets}`, isDisabled: true },
+        { id: 'status', text: `${label} ${percent.toFixed(0)}% · reset ${resets}`, isDisabled: true },
         { id: 'refresh', text: '刷新' },
         { text: '-' },
         { id: 'quit', text: '退出' },
@@ -1338,10 +1337,14 @@ async function latestRateLimitsInFile(
       if (payload.type !== 'token_count' || !payload.rate_limits) continue;
       const primary = parseLocalLimitWindow(rateLimits.primary);
       const secondary = parseLocalLimitWindow(rateLimits.secondary);
-      if (!primary || !secondary) continue;
+      if (!primary && !secondary) continue;
       const ts = Date.parse(String(parsedRecord.timestamp ?? payload.timestamp ?? '')) || Date.now();
       if (!latest || ts > latest.timestamp) {
-        latest = { timestamp: ts, primary, secondary };
+        latest = {
+          timestamp: ts,
+          primary: primary ?? { ...EMPTY_WINDOW },
+          secondary: secondary ?? { ...EMPTY_WINDOW },
+        };
       }
     }
   } catch {

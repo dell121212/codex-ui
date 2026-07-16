@@ -4,7 +4,8 @@ import { useStore } from '../store/usageStore';
 import type { AuthStatus, Settings } from '../types';
 
 interface Props {
-  onClose: () => void;
+  onClose?: () => void;
+  embedded?: boolean;
 }
 
 const INTERVALS = [
@@ -24,7 +25,7 @@ function Toggle({ value, onChange, disabled = false }: { value: boolean; onChang
   );
 }
 
-export default function SettingsPanel({ onClose }: Props) {
+export default function SettingsPanel({ onClose, embedded = false }: Props) {
   const { loadSettings, saveSettings, getAuthStatus, refresh } = useStore();
   const [cfg, setCfg] = useState<Settings>({
     refresh_interval_secs: 60,
@@ -62,7 +63,7 @@ export default function SettingsPanel({ onClose }: Props) {
     try {
       await saveSettings(cfg);
       await refreshAuthStatus();
-      onClose();
+      onClose?.();
     } catch (e) {
       setSaveError(String(e));
     } finally {
@@ -73,15 +74,17 @@ export default function SettingsPanel({ onClose }: Props) {
   const authOk = authStatus?.source === 'codex';
 
   return (
-    <div className="settings-panel">
+    <div className={`settings-panel${embedded ? ' settings-panel--embedded' : ''}`}>
       {/* Header */}
-      <div className="settings-header">
-        <button className="icon-btn" onClick={onClose} aria-label="返回">
-          <ArrowLeft size={14} />
-        </button>
-        <span className="settings-title">设置</span>
-        <div style={{ width: 28 }} />
-      </div>
+      {!embedded && (
+        <div className="settings-header">
+          <button className="icon-btn" onClick={onClose} aria-label="返回">
+            <ArrowLeft size={14} />
+          </button>
+          <span className="settings-title">设置</span>
+          <div style={{ width: 28 }} />
+        </div>
+      )}
 
       <div className="settings-body">
         {/* Auth section */}
@@ -146,7 +149,7 @@ export default function SettingsPanel({ onClose }: Props) {
           <div className="settings-row" style={{ marginTop: 10 }}>
             <div>
               <div className="settings-row-label">用量提醒</div>
-              <div className="settings-row-sub">5 小时窗口达到 90% 时通知</div>
+              <div className="settings-row-sub">任一有效额度窗口达到 90% 时通知</div>
             </div>
             <Toggle
               value={cfg.notify_at_90_pct}
@@ -169,7 +172,7 @@ export default function SettingsPanel({ onClose }: Props) {
 
       {/* Footer */}
       <div className="settings-footer">
-        <button className="btn-secondary" onClick={onClose}>取消</button>
+        {!embedded && <button className="btn-secondary" onClick={onClose}>取消</button>}
         <button className="btn-save" onClick={handleSave} disabled={saving}>
           {saving ? '保存中…' : '保存'}
         </button>

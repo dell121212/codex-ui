@@ -1,10 +1,15 @@
 import type { ModelUsage, RateLimitBucket, WindowUsage } from '../types';
-import { rankRateLimitBuckets, usageHeatColor } from '../services/usageLogic';
+import {
+  rankRateLimitBuckets,
+  usageHeatColor,
+  windowDurationLabel,
+} from '../services/usageLogic';
 
 interface Props {
   buckets?: RateLimitBucket[];
   /** Models with local token captures — used to pin matching quotas first. */
   usedModels?: ModelUsage[];
+  title?: string;
 }
 
 function bucketName(bucket: RateLimitBucket): string {
@@ -14,15 +19,6 @@ function bucketName(bucket: RateLimitBucket): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-function windowName(window: WindowUsage, fallback: string): string {
-  const mins = window.window_duration_mins;
-  if (mins === 300) return '5 小时';
-  if (mins === 10_080) return '7 天';
-  if (mins >= 1_440 && mins % 1_440 === 0) return `${mins / 1_440} 天`;
-  if (mins >= 60 && mins % 60 === 0) return `${mins / 60} 小时`;
-  return mins > 0 ? `${mins} 分钟` : fallback;
 }
 
 function resetText(window: WindowUsage): string {
@@ -40,8 +36,8 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
   return (
     <div className="quota-window">
       <div className="quota-window-header">
-        <span>{windowName(window, fallback)}</span>
-        <span>{Math.round(window.percent)}%</span>
+        <span>{windowDurationLabel(window, fallback)}</span>
+        <span>{Math.round(100 - window.percent)}% 剩余</span>
       </div>
       <div className="progress-bg">
         <div
@@ -54,7 +50,11 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
   );
 }
 
-export default function QuotaList({ buckets, usedModels }: Props) {
+export default function QuotaList({
+  buckets,
+  usedModels,
+  title = '独立模型额度 · 已用优先',
+}: Props) {
   const usedIds = (usedModels ?? [])
     .filter((m) => m.input_tokens + m.output_tokens > 0)
     .map((m) => m.model);
@@ -87,7 +87,7 @@ export default function QuotaList({ buckets, usedModels }: Props) {
 
   return (
     <section className="quota-section" aria-label="独立模型额度">
-      <div className="section-title">独立模型额度 · 已用优先</div>
+      <div className="section-title">{title}</div>
       {extraBuckets.map((bucket) => (
         <div
           className={`card quota-card${isUsed(bucket) ? ' quota-card--used' : ''}`}

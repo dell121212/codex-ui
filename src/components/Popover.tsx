@@ -1,159 +1,82 @@
 import { useState, useEffect, useMemo } from 'react';
 
-import type { AgentId, ProviderLocalUsage } from '../types';
-import { agentMeta } from '../services/agentCatalog';
-import { computeSpend } from '../services/usageLogic';
 import { useStore } from '../store/usageStore';
 
-import Header        from './Header';
-import CompanyList   from './CompanyList';
-import GrokPanel     from './GrokPanel';
-import MistralPanel  from './MistralPanel';
-import RingCard      from './RingCard';
-import WeeklyCard    from './WeeklyCard';
-import ResetPanel    from './ResetPanel';
-import ModelList     from './ModelList';
-import SpendCard     from './SpendCard';
-import QuotaList     from './QuotaList';
+import AppToolbar, { type WorkspaceId } from './AppToolbar';
+import DashboardComposer from './DashboardComposer';
+import ProvidersWorkspace from './ProvidersWorkspace';
 import SetupBanner   from './SetupBanner';
 import SettingsPanel from './SettingsPanel';
+import UsageAnalysisWorkspace from './UsageAnalysisWorkspace';
 
 export default function Popover() {
-  const [showSettings, setShowSettings] = useState(false);
-  const [company, setCompany] = useState<AgentId>('codex');
+  const [workspace, setWorkspace] = useState<WorkspaceId>(initialPreviewWorkspace);
   const { data, isRefreshing, refresh, lastUpdated, error, errorKind, checkFirstLaunch } = useStore();
 
   useEffect(() => {
     checkFirstLaunch().then(first => {
-      if (first) setShowSettings(true);
+      if (first) setWorkspace('settings');
     }).catch(() => {});
   }, [checkFirstLaunch]);
 
-  const localProviders = data?.local_providers ?? [];
-  const activeLocal = useMemo(
-    () => localProviders.find((p) => p.provider === company),
-    [localProviders, company],
+  const localProviders = useMemo(
+    () => data?.local_providers ?? [],
+    [data?.local_providers],
   );
-
-  if (showSettings) {
-    return (
-      <div className="popover">
-        <SettingsPanel onClose={() => {
-          setShowSettings(false);
-          refresh();
-        }} />
-      </div>
-    );
-  }
-
-  const isOpenAI = company === 'codex';
-
   return (
-    <div className="popover">
-      <Header
-        isRefreshing={isRefreshing}
-        onRefresh={refresh}
+    <div className="app-shell">
+      <AppToolbar
+        activeWorkspace={workspace}
         lastUpdated={lastUpdated}
-        onOpenSettings={() => setShowSettings(true)}
-        hasError={!!errorKind && isOpenAI}
+        isRefreshing={isRefreshing}
+        hasError={!!errorKind}
+        onSelectWorkspace={setWorkspace}
+        onRefresh={refresh}
       />
 
-      <div className="popover-chrome">
-        <CompanyList
-          active={company}
-          onSelect={setCompany}
-          providers={localProviders}
-        />
-      </div>
-
-      {/* Single vertical scroll surface for desktop wheel / trackpad */}
-      <div className="popover-scroll" id="main-scroll">
-        <div className="popover-scroll-inner">
-          {isOpenAI ? (
-            <>
-              <SetupBanner
-                errorKind={errorKind}
-                error={data?.error ?? error}
-                onOpenSettings={() => setShowSettings(true)}
-              />
-
-              <div className="metrics-row">
-                <RingCard window={data?.window_5h} />
-                <div className="right-col">
-                  <WeeklyCard window={data?.window_weekly} />
-                  <SpendCard
-                    spend={data?.spend}
-                    today={data?.today_local}
-                    month={data?.month_local}
-                  />
-                </div>
+      <main className="workspace-shell">
+        <div className="workspace-scroll" id="main-scroll">
+          <div className="workspace-content">
+            {workspace === 'overview' && (
+              <div className="overview-workspace">
+                <SetupBanner
+                  errorKind={errorKind}
+                  error={data?.error ?? error}
+                  onOpenSettings={() => setWorkspace('settings')}
+                />
+                <DashboardComposer
+                  data={data}
+                  providers={localProviders}
+                />
               </div>
+            )}
 
-              <ResetPanel banked={data?.banked_resets} />
-
-              <QuotaList
-                buckets={data?.rate_limits}
-                usedModels={[
-                  ...(data?.today_local.models ?? []),
-                  ...(data?.month_local.models ?? []),
-                ]}
+            {workspace === 'usage' && (
+              <UsageAnalysisWorkspace
+                data={data}
+                providers={localProviders}
               />
+            )}
 
-              <ModelList
-                models={data?.today_local.models}
-                monthModels={data?.month_local.models}
+            {workspace === 'providers' && (
+              <ProvidersWorkspace
+                providers={localProviders}
+                onOpenProvider={() => setWorkspace('usage')}
               />
-            </>
-          ) : company === 'grok' ? (
-            <GrokPanel local={activeLocal} />
-          ) : company === 'mistral' ? (
-            <MistralPanel local={activeLocal} />
-          ) : (
-            <CompanyLocalPanel companyId={company} local={activeLocal} />
-          )}
+            )}
 
-          {/* Spacer so last cards clear the scroll edge */}
-          <div className="scroll-end-spacer" aria-hidden />
+            {workspace === 'settings' && <SettingsPanel embedded />}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
 
-function CompanyLocalPanel({
-  companyId,
-  local,
-}: {
-  companyId: AgentId;
-  local?: ProviderLocalUsage;
-}) {
-  const meta = agentMeta(companyId);
-  const today = local?.today;
-  const month = local?.month;
-  const spend = month ? computeSpend(month) : undefined;
-  const hasTokens = !!local?.hasTokens;
-
-  return (
-    <>
-      {!hasTokens && (
-        <div className="company-status card">
-          <p className="company-placeholder-copy">
-            {local?.available
-              ? `已发现 ${meta.localHint}，但尚未拉到会话 token。`
-              : `尚未发现 ${meta.localHint}。`}
-          </p>
-        </div>
-      )}
-
-      {hasTokens && (
-        <>
-          <SpendCard spend={spend} today={today} month={month} />
-          <ModelList
-            models={today?.models}
-            monthModels={month?.models}
-          />
-        </>
-      )}
-    </>
-  );
+function initialPreviewWorkspace(): WorkspaceId {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return 'overview';
+  const requested = new URLSearchParams(window.location.search).get('workspace');
+  return requested === 'usage' || requested === 'providers' || requested === 'settings'
+    ? requested
+    : 'overview';
 }

@@ -23,7 +23,7 @@ body {
   padding:48px 56px;
   -webkit-font-smoothing:antialiased;
 }
-.left { flex:1; max-width:420px; }
+.left { flex:1; max-width:390px; }
 .brand {
   font-size:13px; font-weight:600; color:var(--blue); letter-spacing:.4px;
   margin-bottom:14px;
@@ -46,9 +46,15 @@ h1 {
   display:grid; place-items:center; flex-shrink:0; margin-top:1px;
 }
 .panel {
-  width:360px; background:var(--bg0); border-radius:14px; overflow:hidden;
-  border:0.5px solid var(--sep-soft);
-  box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03);
+  width:660px; background:var(--bg0); border-radius:20px; overflow:hidden;
+  border:0.5px solid rgba(167,194,255,.18);
+  box-shadow:0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.04);
+  transform:perspective(1400px) rotateY(-2deg) rotateX(1deg);
+}
+.panel img {
+  display:block;
+  width:100%;
+  height:auto;
 }
 .header {
   display:flex; align-items:center; justify-content:space-between;
@@ -98,61 +104,15 @@ h1 {
       不粘贴 token，不装 Electron。
     </p>
     <ul class="bullets">
-      <li><i>✓</i><span>OpenAI Codex 5h / 7d 真实窗口</span></li>
+      <li><i>✓</i><span>OpenAI Codex 动态周额度</span></li>
+      <li><i>✓</i><span>参考 CodexBar，Apple 化液态玻璃仪表盘</span></li>
       <li><i>✓</i><span>Grok / Mistral 走官方 billing，不是上下文窗口</span></li>
       <li><i>✓</i><span>蓝→红热力条 · 磁盘缓存秒开 · 远端并行刷新</span></li>
-      <li><i>✓</i><span>一条命令启动：<code style="color:#64d2ff">./run.sh</code></span></li>
     </ul>
   </div>
 
   <div class="panel">
-    <div class="header">
-      <div class="ht">codex-ui</div>
-      <div class="hb">↻ &nbsp; − &nbsp; ✕</div>
-    </div>
-    <div class="chrome">
-      <div class="company">
-        <div class="dot"></div>
-        <div>
-          <div class="cn">OpenAI</div>
-          <div class="cs">Codex</div>
-        </div>
-        <div class="tag">42%</div>
-      </div>
-    </div>
-    <div class="body">
-      <div class="card">
-        <div class="lab">5 小时</div>
-        <div class="row">
-          <div class="big">42%</div>
-          <div class="muted">2小时 18分钟后重置</div>
-        </div>
-        <div class="bar"><div class="fill f42"></div></div>
-        <div class="stat"><span>已用</span><span>12.4k</span></div>
-        <div class="stat"><span>剩余</span><span>17.1k</span></div>
-      </div>
-      <div class="card">
-        <div class="row">
-          <div class="lab" style="margin:0">7 天</div>
-          <div style="font-size:16px;font-weight:700">67%</div>
-        </div>
-        <div class="bar"><div class="fill f67"></div></div>
-        <div class="stat"><span>已用</span><span>84.2k</span></div>
-        <div class="stat"><span>重置</span><span>3天 6小时</span></div>
-      </div>
-      <div class="grid">
-        <div class="card">
-          <div class="lab">今日</div>
-          <div class="amt">~8.2k</div>
-          <div class="per">Token</div>
-        </div>
-        <div class="card">
-          <div class="lab">估价</div>
-          <div class="amt">~$1.24</div>
-          <div class="per">本月会话</div>
-        </div>
-      </div>
-    </div>
+    <img src="./dashboard.png" alt="codex-ui weekly quota dashboard" />
   </div>
 </body>
 </html>

@@ -5,11 +5,13 @@ import { useStore } from '../store/usageStore';
 
 interface Props {
   banked?: BankedResets;
+  embedded?: boolean;
+  compact?: boolean;
 }
 
 const MAX_DOTS = 5; // visual cap for the indicator row
 
-export default function ResetPanel({ banked }: Props) {
+export default function ResetPanel({ banked, embedded = false, compact = false }: Props) {
   const { executeReset } = useStore();
   const [loading, setLoading]   = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -48,7 +50,7 @@ export default function ResetPanel({ banked }: Props) {
     const outcome = await executeReset(banked?.credits[0]?.id);
     setLoading(false);
     const result = {
-      reset: { ok: true, msg: '5 小时窗口已重置' },
+      reset: { ok: true, msg: '额度窗口已重置' },
       alreadyRedeemed: { ok: true, msg: '这次重置已经生效' },
       nothingToReset: { ok: false, msg: '当前窗口不符合重置条件' },
       noCredit: { ok: false, msg: '账户没有可用重置次数' },
@@ -65,18 +67,23 @@ export default function ResetPanel({ banked }: Props) {
     : null;
 
   return (
-    <div className="card reset-panel">
+    <div className={`${embedded ? '' : 'card '}reset-panel${embedded ? ' reset-panel--embedded' : ''}${compact ? ' reset-panel--compact' : ''}`}>
       {/* Header row */}
       <div className="reset-header">
         <div className="reset-meta">
           <div className="reset-title">
             <RotateCcw size={12} aria-hidden />
             <span>手动重置</span>
+            {embedded && <strong>{available == null ? '—' : available} 次</strong>}
           </div>
           <div className="reset-subtitle">
-            {hasAvailable
-              ? `可用 ${available} 次 · 累计已用 ${lifetimeUsed} 次`
-              : available === 0 ? `可用 0 次 · 累计已用 ${lifetimeUsed} 次` : '重置次数暂不可用'}
+            {embedded
+              ? available == null
+                ? '重置次数暂不可用'
+                : `可用次数 · 累计已用 ${lifetimeUsed} 次`
+              : hasAvailable
+                ? `可用 ${available} 次 · 累计已用 ${lifetimeUsed} 次`
+                : available === 0 ? `可用 0 次 · 累计已用 ${lifetimeUsed} 次` : '重置次数暂不可用'}
           </div>
           {lastReset && (
             <div className="reset-last">上次重置：{lastReset}</div>
@@ -87,9 +94,9 @@ export default function ResetPanel({ banked }: Props) {
           className="reset-btn"
           onClick={handleReset}
           disabled={loading || !hasAvailable}
-          aria-label={hasAvailable ? `重置 5 小时窗口，剩余 ${available} 次` : '尝试重置 5 小时窗口'}
+          aria-label={hasAvailable ? `重置额度窗口，剩余 ${available} 次` : '尝试重置额度窗口'}
         >
-          {loading ? '重置中…' : hasAvailable ? '重置窗口' : '暂无额度'}
+          {loading ? '重置中…' : hasAvailable ? compact ? '重置' : '重置窗口' : '暂无额度'}
         </button>
       </div>
 
@@ -108,7 +115,7 @@ export default function ResetPanel({ banked }: Props) {
           >
             <div id="reset-confirm-title" className="confirm-title">确认手动重置？</div>
             <div className="confirm-copy">
-              这会消耗一次 5 小时窗口重置额度。只有确定需要立即恢复窗口时才执行。
+              这会消耗一次官方额度重置次数，并重置当前符合条件的窗口。请仅在确实需要立即恢复额度时执行。
             </div>
             <div className="confirm-actions">
               <button className="btn-secondary" onClick={() => setShowConfirm(false)}>
@@ -123,21 +130,23 @@ export default function ResetPanel({ banked }: Props) {
       )}
 
       {/* Dot indicator row */}
-      <div className="reset-dots" aria-label={hasAvailable ? `当前可用 ${available} 次` : '当前没有可用重置次数'}>
-        {Array.from({ length: visibleSlots }).map((_, i) => (
-          <div
-            key={i}
-            className="reset-dot"
-            style={{
-              background: hasAvailable && i < available ? '#ff9f0a' : 'var(--sep)',
-              transition: 'background 300ms ease',
-            }}
-          />
-        ))}
-        <span className="reset-dot-label">
-          {available == null ? '未知' : `${available} 次`}
-        </span>
-      </div>
+      {!embedded && (
+        <div className="reset-dots" aria-label={hasAvailable ? `当前可用 ${available} 次` : '当前没有可用重置次数'}>
+          {Array.from({ length: visibleSlots }).map((_, i) => (
+            <div
+              key={i}
+              className="reset-dot"
+              style={{
+                background: hasAvailable && i < available ? '#ff9f0a' : 'var(--sep)',
+                transition: 'background 300ms ease',
+              }}
+            />
+          ))}
+          <span className="reset-dot-label">
+            {available == null ? '未知' : `${available} 次`}
+          </span>
+        </div>
+      )}
 
       {/* Inline feedback */}
       {feedback && (

@@ -28,21 +28,19 @@
     "storage.getData",
     "storage.setData",
     "window.focus",
-    "window.hide",
-    "window.minimize",
     "window.show"
   ],
   "modes": {
     "window": {
       "title": "codex-ui",
-      "width": 420,
-      "height": 620,
-      "minWidth": 380,
-      "minHeight": 560,
+      "width": 940,
+      "height": 720,
+      "minWidth": 680,
+      "minHeight": 600,
       "resizable": true,
       "alwaysOnTop": true,
       "skipTaskbar": false,
-      "exitProcessOnClose": false,
+      "exitProcessOnClose": true,
       "injectClientLibrary": true,
       "icon": "public/icons/app.png"
     }

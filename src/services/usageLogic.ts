@@ -21,6 +21,9 @@ export const EMPTY_WINDOW: WindowUsage = {
 
 export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
 
+const WEEK_MINUTES = 7 * 24 * 60;
+const WEEKLY_WINDOW_FLOOR = 6 * 24 * 60;
+
 /**
  * True when a window carries no server/local signal at all.
  * Legitimate 0% after a reset still has duration / reset_at / limit metadata —
@@ -45,6 +48,62 @@ export function coalesceWindow(preferred: WindowUsage, fallback: WindowUsage | n
   return preferred;
 }
 
+/**
+ * OpenAI's app-server contract exposes generic primary / secondary windows.
+ * Most accounts historically used primary=5h and secondary=weekly, but either
+ * lane can be absent and newer rollouts can return the weekly window alone.
+ * Classify by the server-provided duration first, then use legacy position only
+ * when duration metadata is unavailable.
+ */
+export function normalizeCodexWindows(
+  primary: WindowUsage | null | undefined,
+  secondary: WindowUsage | null | undefined,
+): { window_5h: WindowUsage; window_weekly: WindowUsage } {
+  const first = primary && !isWindowMissing(primary) ? primary : null;
+  const second = secondary && !isWindowMissing(secondary) ? secondary : null;
+  const windows = [first, second].filter((window): window is WindowUsage => window !== null);
+
+  let shortWindow = windows.find((window) => (
+    window.window_duration_mins > 0
+    && window.window_duration_mins < WEEKLY_WINDOW_FLOOR
+  )) ?? null;
+  let weeklyWindow = windows.find((window) => (
+    window.window_duration_mins >= WEEKLY_WINDOW_FLOOR
+  )) ?? null;
+
+  // Legacy payloads sometimes omit duration. Preserve the old positional
+  // meaning only for windows that were not classified by duration.
+  if (!shortWindow && first && first !== weeklyWindow) shortWindow = first;
+  if (!weeklyWindow && second && second !== shortWindow) weeklyWindow = second;
+
+  return {
+    window_5h: shortWindow ?? { ...EMPTY_WINDOW },
+    window_weekly: weeklyWindow ?? { ...EMPTY_WINDOW },
+  };
+}
+
+export function windowDurationLabel(window: WindowUsage, fallback = '额度窗口'): string {
+  const mins = window.window_duration_mins;
+  if (mins === WEEK_MINUTES) return '周额度';
+  if (mins === 300) return '5 小时';
+  if (mins >= 1_440 && mins % 1_440 === 0) return `${mins / 1_440} 天`;
+  if (mins >= 60 && mins % 60 === 0) return `${mins / 60} 小时`;
+  if (mins > 0) return `${mins} 分钟`;
+  return fallback;
+}
+
+export function mostConstrainedCodexWindow(
+  window5h: WindowUsage,
+  weekly: WindowUsage,
+): { label: string; window: WindowUsage } | null {
+  const windows = [
+    { label: windowDurationLabel(window5h, '短周期'), window: window5h },
+    { label: windowDurationLabel(weekly, '周额度'), window: weekly },
+  ].filter((entry) => !isWindowMissing(entry.window));
+  if (!windows.length) return null;
+  return windows.sort((a, b) => b.window.percent - a.window.percent)[0];
+}
+
 export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' | 'window_weekly' | 'rate_limits' | 'banked_resets'> | null {
   const data = record(raw);
   const entries = rateLimitEntries(data);
@@ -54,12 +113,12 @@ export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' |
   if (!rate_limits.length) return null;
 
   const best = rate_limits.find((limit) => limit.id.toLowerCase() === 'codex') ?? rate_limits[0];
+  const normalized = normalizeCodexWindows(best.primary, best.secondary);
   const resetSummary = parseResetCreditsSummary(
     data.rateLimitResetCredits ?? data.rate_limit_reset_credits,
   );
   return {
-    window_5h: best.primary,
-    window_weekly: best.secondary,
+    ...normalized,
     rate_limits,
     banked_resets: {
       available: resetSummary.available,
@@ -178,6 +237,9 @@ export function parseWhamResponse(raw: unknown): Pick<UsageSnapshot, 'window_5h'
   );
   if (primaryLive) window_5h = primaryLive;
   if (secondaryLive) window_weekly = secondaryLive;
+  const normalized = normalizeCodexWindows(window_5h, window_weekly);
+  window_5h = normalized.window_5h;
+  window_weekly = normalized.window_weekly;
 
   const planTypeRaw = data.plan_type ?? data.planType ?? rateLimit.plan_type ?? rateLimit.planType;
   const plan_type = typeof planTypeRaw === 'string' && planTypeRaw.trim() ? planTypeRaw.trim() : null;

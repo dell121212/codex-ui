@@ -1,11 +1,11 @@
 # codex-ui
 
 <p align="center">
-  <img src="./docs/images/hero.png" alt="codex-ui — Linux tray AI quota dashboard" width="900" />
+  <img src="./docs/images/hero.png" alt="codex-ui — Linux AI usage desktop console" width="900" />
 </p>
 
 <p align="center">
-  <strong>Lightweight Linux tray dashboard for multi-company AI usage</strong><br/>
+  <strong>Responsive Linux desktop console for multi-company AI usage</strong><br/>
   OpenAI Codex · Claude · Grok · Mistral · Kimi · GLM
 </p>
 
@@ -21,7 +21,7 @@
 
 Codex has desktop apps on Windows and macOS. On Linux, the usual workflow is still the CLI — and answering *“how much quota is left?”* means digging through terminals or web consoles.
 
-**codex-ui** is a small tray app that stays out of the way until you need it. One script, your existing logins, real remaining quota when the provider exposes it — no token pasting, no heavy Electron runtime.
+**codex-ui** is a responsive desktop console with a draggable provider dashboard, workspace navigation, usage analysis, and tray integration. Drag companies from the palette into the dashboard, reorder them, and let the cards automatically reduce detail as the grid grows.
 
 Built with **Neutralino + React + TypeScript**.
 
@@ -30,7 +30,7 @@ Built with **Neutralino + React + TypeScript**.
 Real product UI (dark Apple-style panel used by the app):
 
 <p align="center">
-  <img src="./docs/images/dashboard.png" alt="OpenAI Codex 5h / 7d usage" width="280" />
+  <img src="./docs/images/dashboard.png" alt="OpenAI Codex dynamic weekly usage dashboard" width="280" />
   &nbsp;
   <img src="./docs/images/grok.png" alt="Grok official weekly and monthly billing" width="280" />
   &nbsp;
@@ -39,22 +39,24 @@ Real product UI (dark Apple-style panel used by the app):
 
 | | |
 |---|---|
-| **OpenAI** | 5h ring + 7d bar, local token burn, model ranking |
+| **OpenAI** | Server-driven weekly quota, optional short window, local token burn, model ranking |
 | **Grok** | Official weekly credits + monthly units (`cli-chat-proxy` billing — not context window) |
-| **Companies** | Foldable picker; providers with usage pin to the top |
+| **Companies** | Always-visible provider palette; drag or click companies into the quota canvas |
 
 ## Features
 
 | Area | What you get |
 |------|----------------|
-| **Multi-company strip** | OpenAI, Anthropic, xAI Grok, Mistral, Kimi, GLM — foldable picker; companies with captured usage pin to the top |
-| **OpenAI Codex** | Live 5h / 7d windows via Codex app-server or WHAM, reset credits, model spend estimate |
+| **Multi-company palette** | OpenAI, Anthropic, xAI Grok, Mistral, Kimi, GLM — always visible above the canvas for drag or click composition |
+| **OpenAI Codex** | Duration-aware app-server / WHAM windows, including weekly-only rollouts and legacy dual-window accounts, reset credits, model spend estimate |
 | **Grok** | Official billing: weekly credits + Build/Chat split + monthly credit units |
 | **Mistral Vibe** | Monthly token view + rate-limit headers when available; free tier shows local calendar-month burn when no month cap |
 | **Heat meters** | Continuous **blue → red** progress (low = blue, high = red) |
 | **Fast open** | Disk **stale-while-revalidate** cache: paint last snapshot immediately, refresh in the background; remotes load in parallel |
 | **Local first** | Reads `~/.codex`, `~/.grok`, `~/.vibe` session/auth files automatically |
 | **Linux tray** | Autostart from settings; Zorin / Wayland keeps a taskbar entry when tray is flaky |
+| **Dashboard composer** | Drag providers into the quota canvas, reorder them, and persist the layout |
+| **Portfolio analytics** | Aggregate tokens, messages, estimated cost, provider contribution, and model usage across every monitored AI |
 
 ## Quick start
 

@@ -1,70 +1,78 @@
 # codex-ui
 
 <p align="center">
-  <img src="./docs/images/hero.png" alt="codex-ui — Linux AI usage desktop console" width="900" />
-</p>
-
-<p align="center">
-  <strong>Responsive Linux desktop console for multi-company AI usage</strong><br/>
+  <strong>See remaining AI quota on Linux — without digging through CLIs or browser tabs.</strong><br/>
   OpenAI Codex · Claude · Grok · Mistral · Kimi · GLM
 </p>
 
 <p align="center">
-  <a href="./README.zh.md">中文说明</a>
+  <a href="./README.zh.md">中文</a>
   ·
   <a href="#quick-start">Quick start</a>
   ·
   <a href="#features">Features</a>
+  ·
+  <a href="#how-it-works">How it works</a>
+</p>
+
+<p align="center">
+  <img src="./docs/images/hero.png" alt="codex-ui multi-provider dashboard" width="920" />
 </p>
 
 ---
 
-Codex has desktop apps on Windows and macOS. On Linux, the usual workflow is still the CLI — and answering *“how much quota is left?”* means digging through terminals or web consoles.
+Codex ships a desktop app on Windows and macOS. On Linux you’re usually left with the CLI — and answering *“how much quota is left?”* means opening terminals, scraping logs, or hopping between web consoles.
 
-**codex-ui** is a responsive desktop console with a draggable provider dashboard, workspace navigation, usage analysis, and tray integration. Drag companies from the palette into the dashboard, reorder them, and let the cards automatically reduce detail as the grid grows.
+**codex-ui** is a lightweight Linux desktop console for multi-company AI usage. Drag providers onto a canvas, read official remaining quota when the vendor exposes it, and keep a tray entry so the answer is one click away.
 
-Built with **Neutralino + React + TypeScript**.
-
-## Screenshots
-
-Real product UI (dark Apple-style panel used by the app):
-
-<p align="center">
-  <img src="./docs/images/dashboard.png" alt="OpenAI Codex dynamic weekly usage dashboard" width="280" />
-  &nbsp;
-  <img src="./docs/images/grok.png" alt="Grok official weekly and monthly billing" width="280" />
-  &nbsp;
-  <img src="./docs/images/picker.png" alt="Company picker with usage-first ranking" width="280" />
-</p>
-
-| | |
-|---|---|
-| **OpenAI** | Server-driven weekly quota, optional short window, local token burn, model ranking |
-| **Grok** | Official weekly credits + monthly units (`cli-chat-proxy` billing — not context window) |
-| **Companies** | Always-visible provider palette; drag or click companies into the quota canvas |
+Built with **Neutralino + React + TypeScript** — not an Electron mega-bundle.
 
 ## Features
 
-| Area | What you get |
-|------|----------------|
-| **Multi-company palette** | OpenAI, Anthropic, xAI Grok, Mistral, Kimi, GLM — always visible above the canvas for drag or click composition |
-| **OpenAI Codex** | Duration-aware app-server / WHAM windows, including weekly-only rollouts and legacy dual-window accounts, reset credits, model spend estimate |
-| **Grok** | Official billing: weekly credits + Build/Chat split + monthly credit units |
-| **Mistral Vibe** | Monthly token view + rate-limit headers when available; free tier shows local calendar-month burn when no month cap |
-| **Heat meters** | Continuous **blue → red** progress (low = blue, high = red) |
-| **Fast open** | Disk **stale-while-revalidate** cache: paint last snapshot immediately, refresh in the background; remotes load in parallel |
-| **Local first** | Reads `~/.codex`, `~/.grok`, `~/.vibe` session/auth files automatically |
-| **Linux tray** | Autostart from settings; Zorin / Wayland keeps a taskbar entry when tray is flaky |
-| **Dashboard composer** | Drag providers into the quota canvas, reorder them, and persist the layout |
-| **Portfolio analytics** | Aggregate tokens, messages, estimated cost, provider contribution, and model usage across every monitored AI |
+- **Multi-company palette** — OpenAI Codex, Claude, Grok, Mistral Vibe, Kimi, GLM. Always visible; drag or click to compose your dashboard.
+- **Official quota first** — Codex app-server / WHAM windows, Grok billing credits, Mistral rate-limit headers when available. Never confuses session context-window counters with billed usage.
+- **Portfolio analytics** — Aggregate tokens, messages, estimated cost, provider share, and cross-company model ranking.
+- **Instant open** — Disk stale-while-revalidate cache: paint the last snapshot immediately, refresh remotes in parallel in the background.
+- **Local-first auth** — Reads `~/.codex`, `~/.grok`, `~/.vibe` (and friends) automatically. No tokens pasted into the UI.
+- **Linux tray + taskbar** — Autostart optional. On Zorin / Wayland the window stays recoverable if the tray icon flakes out.
+
+## Screenshots
+
+<p align="center">
+  <img src="./docs/images/dashboard.png" alt="OpenAI Codex weekly quota detail" width="920" />
+  <br/>
+  <sub>Overview — Codex weekly remaining, reset countdown, model spend</sub>
+</p>
+
+<p align="center">
+  <img src="./docs/images/usage.png" alt="Cross-provider usage analysis" width="920" />
+  <br/>
+  <sub>Usage analysis — tokens, cost estimate, provider contribution</sub>
+</p>
+
+<p align="center">
+  <img src="./docs/images/providers.png" alt="Provider connection status" width="920" />
+  <br/>
+  <sub>Providers — login state and local data roots at a glance</sub>
+</p>
+
+<p align="center">
+  <img src="./docs/images/picker.png" alt="Provider palette strip" width="920" />
+  <br/>
+  <sub>Company palette — compose the canvas with a click or a drag</sub>
+</p>
 
 ## Quick start
 
+**Requirements:** Linux, Node.js 20+, a graphical session. Optional but recommended: `codex` CLI already logged in.
+
 ```bash
+git clone https://github.com/dell121212/codex-ui.git
+cd codex-ui
 ./run.sh
 ```
 
-The script installs npm deps, prepares Neutralino, checks Codex auth (`codex login` if needed), builds, and starts the tray UI.
+That’s it. The script installs dependencies, prepares Neutralino, checks Codex auth (`codex login` if needed), builds, and launches the tray UI.
 
 ### Developer checks
 
@@ -74,66 +82,66 @@ npm run typecheck
 npm run build
 ```
 
-### Where the app lands
+### Binary path after build
 
 ```text
-neutralino-dist/codex-ui/
 neutralino-dist/codex-ui/bin/neutralino-linux_x64
 ```
 
-## How quota is loaded
+## How it works
 
 ```text
-Open tray
-  → paint disk/memory cache (instant if present)
-  → phase A: local scan + last remote numbers
+Open the app
+  → paint disk / memory cache (instant if present)
+  → phase A: local session scan + last remote numbers
   → phase B: parallel official remotes
        · Codex app-server / WHAM
        · Grok  GET /v1/billing (+ ?format=credits)
-       · Mistral rate-limit probe (cached ~10 min) + optional admin
+       · Mistral rate-limit probe (cached ~10 min)
 ```
 
 Grok and Mistral **never** treat session context-window counters as billed API usage.
 
-## Auth paths (read-only)
+## Local auth (read-only)
 
-| Company | Typical local path |
-|---------|-------------------|
+| Provider | Typical path |
+|----------|----------------|
 | OpenAI Codex | `~/.codex/auth.json` |
 | Grok / xAI | `~/.grok/auth.json` (OIDC) |
 | Mistral Vibe | `~/.vibe/.env` (`MISTRAL_API_KEY`) |
+| Claude / Kimi / GLM | respective CLI home dirs when present |
 
-No tokens are pasted into the UI. Network calls use temporary curl config files that are cleaned up after use.
+Tokens stay on disk. Network calls use short-lived curl config files that are deleted after use.
 
-## Zorin / Wayland
+## Linux notes (Zorin / Wayland)
 
 The window keeps a normal taskbar entry so you can always recover the dashboard if the tray icon is missing.
 
-Optional tray helper:
+Optional tray helper packages / AppIndicator setup:
 
 ```bash
 ./run.sh --setup-tray
 ```
 
+## Privacy
+
+- Quota cache lives only on your machine (Neutralino storage / small JSON).
+- No drivers, no system network rewrites.
+- Autostart is off until you enable it in Settings.
+
 ## Project layout
 
 ```text
 src/
-  components/     # Popover UI (companies, rings, Grok/Mistral panels)
-  services/       # usage parsing, local providers, Neutralino backend
-  store/          # Zustand usage state
-docs/images/      # README screenshots (HTML mocks → PNG)
+  components/   # toolbar, drag canvas, workspaces
+  services/     # usage parsing, local providers, Neutralino backend
+  store/        # Zustand state
+docs/images/    # README screenshots (captured from the running UI)
 ```
-
-## Privacy & system impact
-
-- Quota cache is stored locally (Neutralino storage / small JSON).
-- Does not install drivers or change system networking.
-- Optional autostart only if you enable it in Settings.
 
 ## License / status
 
-Personal open project. Expect rough edges; PRs and issues welcome on GitHub.
+Personal open project — expect rough edges. Issues and PRs welcome.
 
 ---
 

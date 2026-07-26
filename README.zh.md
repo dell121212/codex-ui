@@ -1,9 +1,8 @@
-# codex-ui
-
 <p align="center">
-  <strong>在 Linux 上直接看 AI 还剩多少额度 —— 不用翻终端，也不用切网页控制台。</strong><br/>
-  OpenAI Codex · Claude · Grok · Mistral · 月之暗面 · 智谱
+  <img src="./assets/readme/hero.svg" width="100%" alt="codex-ui 在 Linux 桌面统一查看多家 AI 官方额度与用量">
 </p>
+
+<p align="center"><strong>在 Linux 上直接看 AI 还剩多少额度——不用翻终端，也不用切网页控制台。</strong></p>
 
 <p align="center">
   <a href="./README.md">English</a>
@@ -16,7 +15,9 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/hero.png" alt="codex-ui 多公司额度看板" width="920" />
+  <img src="./docs/images/hero.png" alt="codex-ui 多公司额度看板真实界面" width="920" />
+  <br/>
+  <sub>真实应用截图——额度卡片、连接状态与跨公司用量</sub>
 </p>
 
 ---

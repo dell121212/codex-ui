@@ -1,9 +1,8 @@
-# codex-ui
-
 <p align="center">
-  <strong>See remaining AI quota on Linux — without digging through CLIs or browser tabs.</strong><br/>
-  OpenAI Codex · Claude · Grok · Mistral · Kimi · GLM
+  <img src="./assets/readme/hero.svg" width="100%" alt="codex-ui Linux desktop dashboard for official AI quota and cross-provider usage">
 </p>
+
+<p align="center"><strong>See remaining AI quota on Linux — without digging through CLIs or browser tabs.</strong></p>
 
 <p align="center">
   <a href="./README.zh.md">中文</a>
@@ -16,7 +15,9 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/hero.png" alt="codex-ui multi-provider dashboard" width="920" />
+  <img src="./docs/images/hero.png" alt="Real codex-ui multi-provider dashboard" width="920" />
+  <br/>
+  <sub>Real application capture — quota cards, provider health, and portfolio usage</sub>
 </p>
 
 ---

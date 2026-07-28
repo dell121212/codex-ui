@@ -9,6 +9,29 @@ import SetupBanner   from './SetupBanner';
 import SettingsPanel from './SettingsPanel';
 import UsageAnalysisWorkspace from './UsageAnalysisWorkspace';
 
+const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; description: string }> = {
+  overview: {
+    eyebrow: 'Overview',
+    title: '用量概览',
+    description: '聚合本地 AI 工具的额度、成本与活跃模型。',
+  },
+  usage: {
+    eyebrow: 'Analytics',
+    title: '用量分析',
+    description: '比较不同 Provider 的使用贡献与本月成本。',
+  },
+  providers: {
+    eyebrow: 'Connections',
+    title: 'Providers',
+    description: '查看本地客户端连接、授权状态与数据来源。',
+  },
+  settings: {
+    eyebrow: 'Preferences',
+    title: '设置',
+    description: '管理同步频率、登录态与通知偏好。',
+  },
+};
+
 export default function Popover() {
   const [workspace, setWorkspace] = useState<WorkspaceId>(initialPreviewWorkspace);
   const { data, isRefreshing, refresh, lastUpdated, error, errorKind, checkFirstLaunch } = useStore();
@@ -23,6 +46,7 @@ export default function Popover() {
     () => data?.local_providers ?? [],
     [data?.local_providers],
   );
+  const workspaceMeta = WORKSPACE_META[workspace];
   return (
     <div className="app-shell">
       <AppToolbar
@@ -37,6 +61,19 @@ export default function Popover() {
       <main className="workspace-shell">
         <div className="workspace-scroll" id="main-scroll">
           <div className="workspace-content">
+            <header className="workspace-header">
+              <div>
+                <span className="workspace-eyebrow">{workspaceMeta.eyebrow}</span>
+                <h1>{workspaceMeta.title}</h1>
+                <p>{workspaceMeta.description}</p>
+              </div>
+              {workspace !== 'settings' && (
+                <span className="workspace-provider-count">
+                  {localProviders.length || 6} 个 Provider
+                </span>
+              )}
+            </header>
+
             {workspace === 'overview' && (
               <div className="overview-workspace">
                 <SetupBanner

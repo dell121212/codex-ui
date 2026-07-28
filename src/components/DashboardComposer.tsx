@@ -19,7 +19,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, X } from 'lucide-react';
+import { GripVertical, Plus, X } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { AgentId, PeriodUsage, ProviderLocalUsage, UsageSnapshot, WindowUsage } from '../types';
 import { agentMeta, COMPANY_LIST } from '../services/agentCatalog';
@@ -140,6 +140,13 @@ export default function DashboardComposer({ data, providers }: Props) {
     >
       <div className="dashboard-composer">
         <section className="provider-palette" aria-label="可添加公司">
+          <div className="provider-palette-heading">
+            <div>
+              <strong>编排额度面板</strong>
+              <span>点击或拖入 Provider</span>
+            </div>
+            <Plus size={14} aria-hidden />
+          </div>
           <div className="provider-palette-list">
             {COMPANY_LIST.map((id) => (
               <PaletteProvider

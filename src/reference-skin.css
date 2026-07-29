@@ -47,6 +47,11 @@ body { color: var(--t1); font-family: -apple-system, BlinkMacSystemFont, 'Inter'
 @keyframes companion-cheer { 0% { transform: translateY(5px) scale(.96); } 45% { transform: translateY(-10px) scale(1.03) rotate(-3deg); } 75% { transform: translateY(-2px) scale(1) rotate(2deg); } 100% { transform: translateY(0) scale(1) rotate(0); } }
 .usage-ring-copy strong { color: #1a1916 !important; text-shadow: none; }
 .usage-ring-copy span { color: #74716b !important; }
+.usage-hero-reset { color: #5f5c56 !important; }
+.usage-hero-reset strong { color: #1a1916 !important; font-weight: 700; }
+.usage-hero-reset-date { color: #85817a !important; }
+.usage-stat span { color: #85817a !important; }
+.usage-stat strong { color: #1a1916 !important; font-weight: 700; }
 .overview-workspace, .usage-workspace, .providers-workspace { gap: 16px; }
 .card, .provider-table, .provider-palette, .workspace-summary-strip, .board-panel, .settings-section { background: var(--bg1); border: 1px solid var(--sep); border-radius: 12px; box-shadow: 0 1px 2px rgba(28,27,26,.05), 0 1px 3px rgba(28,27,26,.04); }
 .card::before, .provider-table::before, .provider-palette::before { display: none; }

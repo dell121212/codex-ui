@@ -1,71 +1,60 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="codex-ui Linux desktop dashboard for official AI quota and cross-provider usage">
+  <img src="./assets/readme/hero.svg" width="100%" alt="codex-ui Linux AI usage and quota workspace">
 </p>
 
-<p align="center"><strong>See remaining AI quota on Linux — without digging through CLIs or browser tabs.</strong></p>
+<p align="center"><strong>See AI quota, cost, and local usage in one Linux desktop workspace.</strong></p>
 
 <p align="center">
-  <a href="./README.zh.md">中文</a>
-  ·
-  <a href="#quick-start">Quick start</a>
-  ·
-  <a href="#features">Features</a>
-  ·
-  <a href="#how-it-works">How it works</a>
+  <a href="./README.zh.md">中文</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#real-interface">Real interface</a> ·
+  <a href="#privacy-and-data-sources">Privacy</a>
 </p>
 
 <p align="center">
-  <img src="./docs/images/hero.png" alt="Real codex-ui multi-provider dashboard" width="920" />
-  <br/>
-  <sub>Real application capture — quota cards, provider health, and portfolio usage</sub>
+  <img src="./docs/images/overview-latest.png" alt="codex-ui overview workspace" width="1100">
 </p>
 
----
+## What it is
 
-Codex ships a desktop app on Windows and macOS. On Linux you’re usually left with the CLI — and answering *“how much quota is left?”* means opening terminals, scraping logs, or hopping between web consoles.
+`codex-ui` is a lightweight Linux desktop workspace for AI usage. It reads local CLI sessions and available provider data, then brings quota, reset windows, tokens, cost estimates, and connection state into one view.
 
-**codex-ui** is a lightweight Linux desktop console for multi-company AI usage. Drag providers onto a canvas, read official remaining quota when the vendor exposes it, and keep a tray entry so the answer is one click away.
+It supports OpenAI Codex, Claude, Kimi, Grok, Mistral Vibe, GLM, and other local providers. Built with **Neutralino + React + TypeScript**, without bundling the full Electron runtime.
 
-Built with **Neutralino + React + TypeScript** — not an Electron mega-bundle.
+## Real interface
+
+### Overview
+
+Compose the dashboard by clicking or dragging providers into the workspace, then inspect quota windows, reset times, cost, and active models.
+
+<p align="center"><img src="./docs/images/overview-latest.png" alt="Overview with provider palette and Codex quota" width="1100"></p>
+
+### Usage analysis
+
+Compare daily and monthly tokens, estimated cost, provider contribution, and cross-provider model usage.
+
+<p align="center"><img src="./docs/images/usage-latest.png" alt="Usage analysis with provider contribution and model ranking" width="1100"></p>
+
+### Provider connections
+
+Review login state, local availability, monthly activity, and the source used for each provider.
+
+<p align="center"><img src="./docs/images/providers-latest.png" alt="Provider connections and local data sources" width="1100"></p>
 
 ## Features
 
-- **Multi-company palette** — OpenAI Codex, Claude, Grok, Mistral Vibe, Kimi, GLM. Always visible; drag or click to compose your dashboard.
-- **Official quota first** — Codex app-server / WHAM windows, Grok billing credits, Mistral rate-limit headers when available. Never confuses session context-window counters with billed usage.
-- **Portfolio analytics** — Aggregate tokens, messages, estimated cost, provider share, and cross-company model ranking.
-- **Instant open** — Disk stale-while-revalidate cache: paint the last snapshot immediately, refresh remotes in parallel in the background.
-- **Local-first auth** — Reads `~/.codex`, `~/.grok`, `~/.vibe` (and friends) automatically. No tokens pasted into the UI.
-- **Linux tray + taskbar** — Autostart optional. On Zorin / Wayland the window stays recoverable if the tray icon flakes out.
+- **Drag-and-drop quota dashboard** — add, remove, and reorder provider cards.
+- **Official data first** — Codex app-server / WHAM, Grok billing, Mistral rate limits, and other official sources when available.
+- **Cache-first startup** — render the last local snapshot immediately, then refresh in parallel.
+- **Local-first authentication** — read CLI state from `~/.codex`, `~/.grok`, `~/.vibe`, and similar directories without pasting tokens into the UI.
+- **Linux tray and taskbar** — keep the workspace one click away, with a taskbar fallback when tray integration is unreliable.
+- **Selectable companion characters** — optional Q-style characters with subtle idle motion on the overview screen.
 
-## Screenshots
-
-<p align="center">
-  <img src="./docs/images/dashboard.png" alt="OpenAI Codex weekly quota detail" width="920" />
-  <br/>
-  <sub>Overview — Codex weekly remaining, reset countdown, model spend</sub>
-</p>
-
-<p align="center">
-  <img src="./docs/images/usage.png" alt="Cross-provider usage analysis" width="920" />
-  <br/>
-  <sub>Usage analysis — tokens, cost estimate, provider contribution</sub>
-</p>
-
-<p align="center">
-  <img src="./docs/images/providers.png" alt="Provider connection status" width="920" />
-  <br/>
-  <sub>Providers — login state and local data roots at a glance</sub>
-</p>
-
-<p align="center">
-  <img src="./docs/images/picker.png" alt="Provider palette strip" width="920" />
-  <br/>
-  <sub>Company palette — compose the canvas with a click or a drag</sub>
-</p>
+> **Unofficial fan-made decoration notice:** This project is independent from *Genshin Impact*, miHoYo, HoYoverse, and all related rights holders. It is not affiliated with, authorized by, sponsored by, or endorsed by them. The Q-style characters are included only as a personal-interest decoration for a local interface; they are not part of the codex-ui brand, product, or any commercial partnership. Character names, likenesses, and related rights remain with their respective owners.
 
 ## Quick start
 
-**Requirements:** Linux, Node.js 20+, a graphical session. Optional but recommended: `codex` CLI already logged in.
+Requirements: Linux, Node.js 20+, and a graphical session. Complete `codex login` first if you want Codex data.
 
 ```bash
 git clone https://github.com/dell121212/codex-ui.git
@@ -73,79 +62,66 @@ cd codex-ui
 ./run.sh
 ```
 
-That’s it. The script installs dependencies, prepares Neutralino, checks Codex auth (`codex login` if needed), builds, and launches the tray UI.
+The script installs dependencies, prepares Neutralino, checks local auth, builds, and launches the desktop UI.
 
-### Developer checks
+### Development checks
 
 ```bash
+npm install
+npm run dev
+
 npm test
 npm run typecheck
 npm run build
+
+# Browser drag regression
+npm run dev
+npm run test:browser
 ```
 
-### Binary path after build
+### Build output
 
 ```text
 neutralino-dist/codex-ui/bin/neutralino-linux_x64
 ```
 
-## How it works
+## How data flows
 
 ```text
 Open the app
-  → paint disk / memory cache (instant if present)
-  → phase A: local session scan + last remote numbers
-  → phase B: parallel official remotes
-       · Codex app-server / WHAM
-       · Grok  GET /v1/billing (+ ?format=credits)
-       · Mistral rate-limit probe (cached ~10 min)
+  → read the local cache immediately
+  → scan local CLI auth and session data
+  → query available official quota endpoints in parallel
+  → merge provider, model, token, and cost data
 ```
 
-Grok and Mistral **never** treat session context-window counters as billed API usage.
+When a provider has no official quota endpoint, codex-ui shows local availability or missing data explicitly. It does not present a session context window as billed API usage.
 
-## Local auth (read-only)
+## Privacy and data sources
 
-| Provider | Typical path |
-|----------|----------------|
+- Quota cache stays on the local machine.
+- Authentication directories are scanned read-only; tokens are not displayed in the UI.
+- Network requests use temporary configuration and clean it up afterward.
+- No drivers or system network rewrites. Autostart is opt-in from Settings.
+
+Typical paths:
+
+| Provider | Path |
+| --- | --- |
 | OpenAI Codex | `~/.codex/auth.json` |
-| Grok / xAI | `~/.grok/auth.json` (OIDC) |
-| Mistral Vibe | `~/.vibe/.env` (`MISTRAL_API_KEY`) |
-| Claude / Kimi / GLM | respective CLI home dirs when present |
-
-Tokens stay on disk. Network calls use short-lived curl config files that are deleted after use.
-
-## Linux notes (Zorin / Wayland)
-
-The window keeps a normal taskbar entry so you can always recover the dashboard if the tray icon is missing.
-
-Optional tray helper packages / AppIndicator setup:
-
-```bash
-./run.sh --setup-tray
-```
-
-## Privacy
-
-- Quota cache lives only on your machine (Neutralino storage / small JSON).
-- No drivers, no system network rewrites.
-- Autostart is off until you enable it in Settings.
+| Grok / xAI | `~/.grok/auth.json` |
+| Mistral Vibe | `~/.vibe/.env` |
+| Claude / Kimi / GLM | respective CLI home directories when present |
 
 ## Project layout
 
 ```text
-src/
-  components/   # toolbar, drag canvas, workspaces
-  services/     # usage parsing, local providers, Neutralino backend
-  store/        # Zustand state
-docs/images/    # README screenshots (captured from the running UI)
+src/components/   # toolbar, quota cards, drag canvas, workspaces
+src/services/     # provider parsing, local data, Neutralino backend
+src/store/        # usage and board state
+docs/images/      # real UI screenshots used by this README
 ```
 
-## License / status
+## License and status
 
-Personal open project — expect rough edges. Issues and PRs welcome.
-
----
-
-<p align="center">
-  <sub>Made for Linux users who just want to know how much AI budget is left.</sub>
-</p>
+Personal open-source project. Issues and PRs are welcome. Some UI assets are recorded in the local asset provenance note at `public/assets/game-ui/README.md`. This notice expresses project intent but is not a substitute for permission and cannot guarantee that copyright, trademark, or other legal risk is eliminated in every jurisdiction. Remove unlicensed character assets or replace them with owned/licensed assets before public redistribution or commercial use.

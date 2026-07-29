@@ -65,7 +65,7 @@ export default function AppToolbar({
             onClick={() => onSelectWorkspace(id)}
             aria-current={activeWorkspace === id ? 'page' : undefined}
           >
-            <Icon size={15} strokeWidth={1.8} aria-hidden />
+            <Icon size={16} strokeWidth={1.7} aria-hidden />
             <span>{label}</span>
             <ChevronRight className="app-toolbar-nav-chevron" size={13} aria-hidden />
           </button>
@@ -96,7 +96,7 @@ export default function AppToolbar({
           onClick={() => onSelectWorkspace('settings')}
           aria-current={activeWorkspace === 'settings' ? 'page' : undefined}
         >
-          <Settings2 size={15} />
+          <Settings2 size={16} strokeWidth={1.7} />
           <span>偏好设置</span>
           <ChevronRight size={13} aria-hidden />
         </button>

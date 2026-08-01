@@ -1,3 +1,6 @@
+@import '@appica/ui-react/styles.css';
+@source '../node_modules/@appica/ui-react/dist';
+
 /* ─── Design tokens ──────────────────────────────────────────────────────────
    Mirrors Apple's HIG dark palette, with CSS variables so every component
    is theme-consistent without referencing hard-coded hex values.

@@ -8,6 +8,7 @@ import ProvidersWorkspace from './ProvidersWorkspace';
 import SetupBanner   from './SetupBanner';
 import SettingsPanel from './SettingsPanel';
 import UsageAnalysisWorkspace from './UsageAnalysisWorkspace';
+import WorkspaceCompanion from './WorkspaceCompanion';
 
 const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; description: string }> = {
   overview: {
@@ -17,13 +18,13 @@ const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; desc
   },
   usage: {
     eyebrow: 'Analytics',
-    title: '用量分析',
-    description: '比较不同 Provider 的使用贡献与本月成本。',
+    title: '用量与成本',
+    description: '跨 Provider 对比',
   },
   providers: {
     eyebrow: 'Connections',
-    title: 'Providers',
-    description: '查看本地客户端连接、授权状态与数据来源。',
+    title: '连接状态',
+    description: 'Provider 授权与来源',
   },
   settings: {
     eyebrow: 'Preferences',
@@ -32,17 +33,8 @@ const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; desc
   },
 };
 
-const COMPANIONS = [
-  { id: 'paimon', name: '派蒙', src: '/assets/game-ui/character-paimon.png' },
-  { id: 'klee', name: '可莉', src: '/assets/companions/klee.png' },
-  { id: 'nahida', name: '纳西妲', src: '/assets/companions/nahida.png' },
-  { id: 'sayu', name: '早柚', src: '/assets/companions/sayu.png' },
-] as const;
-
 export default function Popover() {
   const [workspace, setWorkspace] = useState<WorkspaceId>(initialPreviewWorkspace);
-  const [companionId, setCompanionId] = useState<(typeof COMPANIONS)[number]['id']>('paimon');
-  const [companionMotion, setCompanionMotion] = useState<'float' | 'sway' | 'cheer'>('float');
   const { data, isRefreshing, refresh, lastUpdated, error, errorKind, checkFirstLaunch } = useStore();
 
   useEffect(() => {
@@ -50,16 +42,6 @@ export default function Popover() {
       if (first) setWorkspace('settings');
     }).catch(() => {});
   }, [checkFirstLaunch]);
-
-  useEffect(() => {
-    const motions = ['float', 'sway', 'cheer'] as const;
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index = (index + 1) % motions.length;
-      setCompanionMotion(motions[index]);
-    }, 4200);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const localProviders = useMemo(
     () => data?.local_providers ?? [],
@@ -80,35 +62,28 @@ export default function Popover() {
       <main className="workspace-shell">
         <div className="workspace-scroll" id="main-scroll">
           <div className="workspace-content">
-            <header className="workspace-header">
-              <div>
-                <span className="workspace-eyebrow">{workspaceMeta.eyebrow}</span>
-                <h1>{workspaceMeta.title}</h1>
-                <p>{workspaceMeta.description}</p>
+            <header className={`workspace-header${workspace === 'overview' ? ' workspace-header--overview' : ''}`}>
+              <div className="workspace-title-block">
+                {workspace !== 'overview' && (
+                  <span className="workspace-eyebrow">{workspaceMeta.eyebrow}</span>
+                )}
+                <div className="workspace-title-row">
+                  <h1>{workspaceMeta.title}</h1>
+                  {workspace === 'overview' && (
+                    <span className="workspace-provider-count">
+                      {localProviders.length || 6} 个 Provider
+                    </span>
+                  )}
+                </div>
+                {workspace !== 'overview' && <p>{workspaceMeta.description}</p>}
               </div>
               {workspace === 'overview' && (
-                <div className="workspace-companion-area">
-                  <div className="workspace-companion-picker" aria-label="选择陪伴角色">
-                    {COMPANIONS.map((companion) => (
-                      <button
-                        key={companion.id}
-                        type="button"
-                        className={`workspace-companion-choice${companion.id === companionId ? ' is-active' : ''}`}
-                        onClick={() => setCompanionId(companion.id)}
-                        aria-label={`选择${companion.name}`}
-                        title={companion.name}
-                      >
-                        <img src={companion.src} alt="" />
-                      </button>
-                    ))}
-                  </div>
-                  <div className={`workspace-mascot companion-motion--${companionMotion}`} aria-hidden="true">
-                    <img src={COMPANIONS.find((companion) => companion.id === companionId)?.src ?? COMPANIONS[0].src} alt="" />
-                    <span>今日也要好好管理额度哦</span>
-                  </div>
-                </div>
+                <WorkspaceCompanion
+                  data={data}
+                  providerCount={localProviders.length || 6}
+                />
               )}
-              {workspace !== 'settings' && (
+              {workspace !== 'overview' && workspace !== 'settings' && (
                 <span className="workspace-provider-count">
                   {localProviders.length || 6} 个 Provider
                 </span>

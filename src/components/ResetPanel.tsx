@@ -1,4 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@appica/ui-react/alert-dialog';
+import { Button } from '@appica/ui-react/button';
 import { RotateCcw } from 'lucide-react';
 import type { BankedResets } from '../types';
 import { useStore } from '../store/usageStore';
@@ -23,24 +34,10 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
   }, []);
 
-  useEffect(() => {
-    if (!showConfirm) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowConfirm(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [showConfirm]);
-
   const available    = banked?.available ?? null;
   const hasAvailable = available != null && available > 0;
   const lifetimeUsed = banked?.lifetime_used ?? 0;
   const visibleSlots = hasAvailable ? Math.min(available, MAX_DOTS) : 0;
-
-  const handleReset = () => {
-    if (loading || !hasAvailable) return;
-    setShowConfirm(true);
-  };
 
   const confirmReset = async () => {
     if (loading) return;
@@ -90,44 +87,45 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
           )}
         </div>
 
-        <button
-          className="reset-btn"
-          onClick={handleReset}
-          disabled={loading || !hasAvailable}
-          aria-label={hasAvailable ? `重置额度窗口，剩余 ${available} 次` : '尝试重置额度窗口'}
-        >
-          {loading ? '重置中…' : hasAvailable ? compact ? '重置' : '重置窗口' : '暂无额度'}
-        </button>
+        <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
+          <AlertDialogTrigger
+            render={(
+              <Button
+                className="reset-btn"
+                variant="outline"
+                size="sm"
+                disabled={loading || !hasAvailable}
+                aria-label={hasAvailable ? `重置额度窗口，剩余 ${available} 次` : '尝试重置额度窗口'}
+              >
+                {loading ? '重置中…' : hasAvailable ? compact ? '重置' : '重置窗口' : '暂无额度'}
+              </Button>
+            )}
+          />
+          <AlertDialogContent className="confirm-dialog appica-confirm-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="confirm-title">确认手动重置？</AlertDialogTitle>
+              <AlertDialogDescription className="confirm-copy">
+                这会消耗一次官方额度重置次数，并重置当前符合条件的窗口。请仅在确实需要立即恢复额度时执行。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="confirm-actions">
+              <AlertDialogClose render={<Button className="btn-secondary" variant="outline">取消</Button>} />
+              <AlertDialogClose
+                render={(
+                  <Button
+                    className="btn-confirm-danger"
+                    variant="destructive"
+                    onClick={() => void confirmReset()}
+                    disabled={loading}
+                  >
+                    确认重置
+                  </Button>
+                )}
+              />
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-
-      {showConfirm && (
-        <div
-          className="confirm-backdrop"
-          role="presentation"
-          onClick={() => setShowConfirm(false)}
-        >
-          <div
-            className="confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reset-confirm-title"
-            onClick={e => e.stopPropagation()}
-          >
-            <div id="reset-confirm-title" className="confirm-title">确认手动重置？</div>
-            <div className="confirm-copy">
-              这会消耗一次官方额度重置次数，并重置当前符合条件的窗口。请仅在确实需要立即恢复额度时执行。
-            </div>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setShowConfirm(false)}>
-                取消
-              </button>
-              <button className="btn-confirm-danger" onClick={confirmReset} disabled={loading}>
-                确认重置
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Dot indicator row */}
       {!embedded && (

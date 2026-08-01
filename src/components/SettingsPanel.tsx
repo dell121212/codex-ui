@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Button } from '@appica/ui-react/button';
+import { Switch } from '@appica/ui-react/switch';
+import { Toggle } from '@appica/ui-react/toggle';
+import { ToggleGroup } from '@appica/ui-react/toggle-group';
 import { ArrowLeft, CheckCircle, XCircle, Loader, RefreshCw } from 'lucide-react';
 import { useStore } from '../store/usageStore';
 import type { AuthStatus, Settings } from '../types';
@@ -14,16 +18,6 @@ const INTERVALS = [
   { label: '2 分钟',  value: 120 },
   { label: '5 分钟',  value: 300 },
 ];
-
-function Toggle({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <label className="toggle" aria-label="开关">
-      <input type="checkbox" checked={value} disabled={disabled} onChange={e => onChange(e.target.checked)} />
-      <span className="toggle-track" />
-      <span className="toggle-thumb" />
-    </label>
-  );
-}
 
 export default function SettingsPanel({ onClose, embedded = false }: Props) {
   const { loadSettings, saveSettings, getAuthStatus, refresh } = useStore();
@@ -78,9 +72,9 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
       {/* Header */}
       {!embedded && (
         <div className="settings-header">
-          <button className="icon-btn" onClick={onClose} aria-label="返回">
+          <Button className="icon-btn" variant="ghost" size="icon-sm" onClick={onClose} aria-label="返回">
             <ArrowLeft size={14} />
-          </button>
+          </Button>
           <span className="settings-title">设置</span>
           <div style={{ width: 28 }} />
         </div>
@@ -105,14 +99,16 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
               <div className="auth-status-path">{authStatus.auth_path}</div>
             )}
           </div>
-          <button
+          <Button
             className="test-btn"
+            variant="outline"
+            size="sm"
             onClick={refreshAuthStatus}
             disabled={checkingAuth}
           >
             <RefreshCw size={12} style={{ animation: checkingAuth ? 'spin 0.8s linear infinite' : 'none' }} />
             重新检测
-          </button>
+          </Button>
           <div className="settings-hint">
             程序会在启动和刷新时自动读取 Codex CLI token。未登录时，在终端运行 codex login 后点重新检测。
           </div>
@@ -121,17 +117,27 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
         {/* Refresh interval */}
         <div className="settings-section">
           <div className="settings-section-label">刷新间隔</div>
-          <div className="seg-ctrl" role="group" aria-label="刷新间隔">
+          <ToggleGroup
+            className="seg-ctrl"
+            aria-label="刷新间隔"
+            value={[String(cfg.refresh_interval_secs)]}
+            onValueChange={(values) => {
+              const next = Number(values[0]);
+              if (Number.isFinite(next)) {
+                setCfg((current) => ({ ...current, refresh_interval_secs: next }));
+              }
+            }}
+          >
             {INTERVALS.map(({ label, value }) => (
-              <button
+              <Toggle
                 key={value}
+                value={String(value)}
                 className={`seg-btn ${cfg.refresh_interval_secs === value ? 'seg-btn--active' : ''}`}
-                onClick={() => setCfg(c => ({ ...c, refresh_interval_secs: value }))}
               >
                 {label}
-              </button>
+              </Toggle>
             ))}
-          </div>
+          </ToggleGroup>
         </div>
 
         {/* Toggle rows */}
@@ -141,9 +147,11 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
               <div className="settings-row-label">开机自启</div>
               <div className="settings-row-sub">发布版可随登录自动启动</div>
             </div>
-            <Toggle
-              value={cfg.autostart}
-              onChange={v => setCfg(c => ({ ...c, autostart: v }))}
+            <Switch
+              size="md"
+              checked={cfg.autostart}
+              onCheckedChange={v => setCfg(c => ({ ...c, autostart: v }))}
+              aria-label="开机自启"
             />
           </div>
           <div className="settings-row" style={{ marginTop: 10 }}>
@@ -151,9 +159,11 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
               <div className="settings-row-label">用量提醒</div>
               <div className="settings-row-sub">任一有效额度窗口达到 90% 时通知</div>
             </div>
-            <Toggle
-              value={cfg.notify_at_90_pct}
-              onChange={v => setCfg(c => ({ ...c, notify_at_90_pct: v }))}
+            <Switch
+              size="md"
+              checked={cfg.notify_at_90_pct}
+              onCheckedChange={v => setCfg(c => ({ ...c, notify_at_90_pct: v }))}
+              aria-label="用量提醒"
             />
           </div>
         </div>
@@ -172,10 +182,10 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
 
       {/* Footer */}
       <div className="settings-footer">
-        {!embedded && <button className="btn-secondary" onClick={onClose}>取消</button>}
-        <button className="btn-save" onClick={handleSave} disabled={saving}>
+        {!embedded && <Button className="btn-secondary" variant="outline" onClick={onClose}>取消</Button>}
+        <Button className="btn-save" variant="primary" onClick={handleSave} disabled={saving}>
           {saving ? '保存中…' : '保存'}
-        </button>
+        </Button>
       </div>
     </div>
   );

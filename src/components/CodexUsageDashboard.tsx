@@ -11,12 +11,6 @@ interface Props {
   bankedResets?: BankedResets;
 }
 
-function sourceName(source?: string): string {
-  if (source?.includes('app-server')) return 'Codex app-server';
-  if (source?.includes('http')) return 'OpenAI usage API';
-  return '服务端动态窗口';
-}
-
 export default function CodexUsageDashboard({
   shortWindow,
   weeklyWindow,
@@ -26,17 +20,20 @@ export default function CodexUsageDashboard({
 }: Props) {
   const shortAvailable = !isWindowMissing(shortWindow);
   const weeklyAvailable = !isWindowMissing(weeklyWindow);
-  const main = weeklyAvailable ? weeklyWindow! : shortAvailable ? shortWindow! : null;
-  const secondary = main === weeklyWindow && shortAvailable ? shortWindow! : null;
+  // OpenAI documents the rolling five-hour window as the base Codex allowance;
+  // weekly limits may additionally apply. Prefer 5h when both are returned,
+  // but keep weekly-only rollouts honest instead of inventing a missing window.
+  const main = shortAvailable ? shortWindow! : weeklyAvailable ? weeklyWindow! : null;
+  const secondary = shortAvailable && weeklyAvailable ? weeklyWindow! : null;
   return (
     <ProviderQuotaDashboard
       providerName="OpenAI Codex"
-      source={sourceName(source)}
+      source={source?.includes('app-server') ? undefined : source}
       primary={main ?? undefined}
       secondary={secondary ?? undefined}
       primaryLabel={main ? windowDurationLabel(main, '当前额度') : '周额度'}
-      secondaryLabel={secondary ? windowDurationLabel(secondary, '短周期') : '短周期'}
-      periodCopy={main === weeklyWindow ? '本周已使用 ' : '当前周期已使用 '}
+      secondaryLabel={secondary ? windowDurationLabel(secondary, '周额度') : '周额度'}
+      periodCopy={main === shortWindow ? '当前 5 小时已使用 ' : '本周已使用 '}
       accentColor="#6f8cff"
       density={density}
       emptyCopy="等待 app-server 返回当前额度窗口。"

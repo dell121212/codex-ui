@@ -1,3 +1,5 @@
+import { Button } from '@appica/ui-react/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@appica/ui-react/tooltip';
 import {
   BarChart3,
   Blocks,
@@ -58,48 +60,71 @@ export default function AppToolbar({
       <div className="app-toolbar-section-label">工作区</div>
       <nav className="app-toolbar-nav" aria-label="工作区">
         {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            className={`app-toolbar-nav-item${activeWorkspace === id ? ' app-toolbar-nav-item--active' : ''}`}
-            onClick={() => onSelectWorkspace(id)}
-            aria-current={activeWorkspace === id ? 'page' : undefined}
-          >
-            <Icon size={16} strokeWidth={1.7} aria-hidden />
-            <span>{label}</span>
-            <ChevronRight className="app-toolbar-nav-chevron" size={13} aria-hidden />
-          </button>
+          <Tooltip key={id}>
+            <TooltipTrigger
+              render={(
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={`app-toolbar-nav-item${activeWorkspace === id ? ' app-toolbar-nav-item--active' : ''}`}
+                  onClick={() => onSelectWorkspace(id)}
+                  aria-current={activeWorkspace === id ? 'page' : undefined}
+                >
+                  <Icon size={16} strokeWidth={1.7} aria-hidden />
+                  <span>{label}</span>
+                  <ChevronRight className="app-toolbar-nav-chevron" size={13} aria-hidden />
+                </Button>
+              )}
+            />
+            <TooltipContent side="right" sideOffset={8}>{label}</TooltipContent>
+          </Tooltip>
         ))}
       </nav>
 
       <div className="app-toolbar-footer" data-no-drag>
         <div className="app-toolbar-sync" role="status" aria-label={syncLabel}>
-          <span className={`app-toolbar-health${hasError ? ' app-toolbar-health--warning' : ''}`} />
-          <span>
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="app-toolbar-button app-toolbar-button--sync"
+                  onClick={onRefresh}
+                  disabled={isRefreshing}
+                  aria-label={`刷新数据，${syncLabel}`}
+                >
+                  <RefreshCw size={14} style={{ animation: isRefreshing ? 'spin .8s linear infinite' : 'none' }} />
+                  <span className={`app-toolbar-health${hasError ? ' app-toolbar-health--warning' : ''}`} aria-hidden />
+                </Button>
+              )}
+            />
+            <TooltipContent side="right" sideOffset={8}>{`刷新 · ${syncLabel}`}</TooltipContent>
+          </Tooltip>
+          <span className="app-toolbar-sync-copy">
             <strong>{hasError ? '同步需要处理' : '数据已连接'}</strong>
             <small>{syncLabel}</small>
           </span>
-          <button
-            type="button"
-            className="app-toolbar-button"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            aria-label="刷新"
-            title="刷新"
-          >
-            <RefreshCw size={14} style={{ animation: isRefreshing ? 'spin .8s linear infinite' : 'none' }} />
-          </button>
         </div>
-        <button
-          type="button"
-          className={`app-toolbar-settings-row${activeWorkspace === 'settings' ? ' app-toolbar-settings-row--active' : ''}`}
-          onClick={() => onSelectWorkspace('settings')}
-          aria-current={activeWorkspace === 'settings' ? 'page' : undefined}
-        >
-          <Settings2 size={16} strokeWidth={1.7} />
-          <span>偏好设置</span>
-          <ChevronRight size={13} aria-hidden />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <Button
+                type="button"
+                variant="ghost"
+                className={`app-toolbar-settings-row${activeWorkspace === 'settings' ? ' app-toolbar-settings-row--active' : ''}`}
+                onClick={() => onSelectWorkspace('settings')}
+                aria-current={activeWorkspace === 'settings' ? 'page' : undefined}
+              >
+                <Settings2 size={16} strokeWidth={1.7} />
+                <span>偏好设置</span>
+                <ChevronRight size={13} aria-hidden />
+              </Button>
+            )}
+          />
+          <TooltipContent side="right" sideOffset={8}>偏好设置</TooltipContent>
+        </Tooltip>
       </div>
     </aside>
   );

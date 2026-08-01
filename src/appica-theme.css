@@ -1,0 +1,119 @@
+/* OpenDesign warm-editorial tokens mapped onto Appica's semantic contract. */
+:root,
+.light {
+  color-scheme: light;
+
+  --foreground: #1c1a17;
+  --foreground-subtle: #a39a92;
+  --foreground-muted: #8a817a;
+  --foreground-strong: #2f2b27;
+  --foreground-emphasis: #1c1a17;
+  --foreground-intense: #11100e;
+  --foreground-inverse: #ffffff;
+
+  --background: #faf7f2;
+  --background-subtle: #ffffff;
+  --background-muted: #f3eee8;
+  --background-strong: #e8dfd6;
+  --background-inverse: #1c1a17;
+
+  --border: #ded5cc;
+  --border-muted: #ebe4dd;
+  --border-strong: #c8bcb1;
+  --border-emphasis: #a39a92;
+  --border-intense: #8a817a;
+  --border-inverse: #2f2b27;
+  --border-overlay: #ebe4dd;
+
+  --primary: #c0512f;
+  --primary-subtle: #fbede7;
+  --primary-soft: #f3d8cd;
+  --primary-muted: #d8896e;
+  --primary-strong: #a84225;
+  --primary-foreground: #ffffff;
+
+  --secondary: #2f5b4f;
+  --secondary-subtle: #edf4f1;
+  --secondary-soft: #d7e5df;
+  --secondary-muted: #8aaca1;
+  --secondary-strong: #24483e;
+  --secondary-emphasis: #2f5b4f;
+  --secondary-intense: #1d3932;
+  --secondary-foreground: #ffffff;
+
+  --success: #2f5b4f;
+  --success-subtle: #edf4f1;
+  --success-soft: #d7e5df;
+  --success-muted: #8aaca1;
+  --success-strong: #24483e;
+  --success-emphasis: #2f5b4f;
+  --success-intense: #1d3932;
+  --success-foreground: #ffffff;
+
+  --warning: #c6812f;
+  --warning-subtle: #fdf3e6;
+  --warning-soft: #f7e1c5;
+  --warning-muted: #dfa96a;
+  --warning-strong: #a66522;
+  --warning-emphasis: #c6812f;
+  --warning-intense: #824f18;
+  --warning-foreground: #1c1a17;
+
+  --error: #b7483d;
+  --error-subtle: #fbecea;
+  --error-soft: #f4d4d0;
+  --error-muted: #d98b83;
+  --error-strong: #98382f;
+  --error-emphasis: #b7483d;
+  --error-intense: #782a24;
+  --error-foreground: #ffffff;
+
+  --info: #52738a;
+  --info-subtle: #edf3f6;
+  --info-soft: #d7e4ea;
+  --info-muted: #91aab9;
+  --info-strong: #3f5c70;
+  --info-emphasis: #52738a;
+  --info-intense: #304858;
+  --info-foreground: #ffffff;
+
+  --focus-ring: #d8896e;
+  --focus-ring-input: #c8bcb1;
+  --focus-ring-primary: rgb(192 81 47 / 35%);
+  --focus-ring-secondary: rgb(47 91 79 / 35%);
+  --focus-ring-error: rgb(183 72 61 / 35%);
+  --focus-ring-success: rgb(47 91 79 / 35%);
+  --focus-ring-warning: rgb(198 129 47 / 35%);
+  --focus-ring-info: rgb(82 115 138 / 35%);
+  --focus-ring-light: rgb(255 255 255 / 40%);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --border-width: 1px;
+  --radius: 0.625rem;
+  --shadow-color: rgb(55 45 38 / 10%);
+  --selection-color: rgb(192 81 47 / 18%);
+}
+
+[data-slot='popover-content'],
+[data-slot='tooltip-content'] {
+  box-shadow: 0 8px 24px rgb(55 45 38 / 10%);
+}
+
+[data-slot='alert-dialog-backdrop'] {
+  background: rgb(28 26 23 / 32%);
+  backdrop-filter: none;
+}
+
+[data-slot='alert-dialog-popup'].appica-confirm-dialog {
+  width: min(320px, 100%);
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--background-subtle);
+  box-shadow: 0 12px 32px rgb(55 45 38 / 14%);
+  backdrop-filter: none;
+}
+
+.appica-confirm-dialog .confirm-title {
+  font-family: 'Source Serif 4', Georgia, serif;
+}

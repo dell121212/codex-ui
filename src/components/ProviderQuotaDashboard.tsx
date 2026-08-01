@@ -7,7 +7,7 @@ export type DashboardDensity = 'detail' | 'balanced' | 'compact';
 
 interface Props {
   providerName: string;
-  source: string;
+  source?: string;
   primary?: WindowUsage;
   secondary?: WindowUsage;
   primaryLabel: string;
@@ -97,7 +97,9 @@ export default function ProviderQuotaDashboard({
           <span className="usage-hero-brand-icon" aria-hidden><Sparkles size={14} /></span>
           <span>
             <span className="usage-hero-brand-title">{providerName}</span>
-            <span className="usage-hero-brand-subtitle">{available ? source : emptyCopy}</span>
+            {available
+              ? source && <span className="usage-hero-brand-subtitle">{source}</span>
+              : <span className="usage-hero-brand-subtitle">{emptyCopy}</span>}
           </span>
         </div>
         <span className={`usage-state usage-state--${pressure.className}`}>

@@ -55,9 +55,9 @@ ensure_command() {
 }
 
 ensure_node() {
-  log "检查 Node.js / npm..."
+  log "检查 Node.js / pnpm..."
   ensure_command node "请先安装 Node.js 20+。"
-  ensure_command npm "请先安装 npm。"
+  ensure_command pnpm "请先安装 pnpm 10+。"
 
   local node_ver node_major
   node_ver="$(node --version)"
@@ -69,13 +69,13 @@ ensure_node() {
   fi
 }
 
-ensure_npm_deps() {
-  if [[ ! -d node_modules ]] || [[ package.json -nt node_modules/.package-lock.json ]] || [[ package-lock.json -nt node_modules/.package-lock.json ]]; then
-    log "安装/更新 npm 依赖..."
-    npm install --loglevel=error
-    ok "npm 依赖已就绪"
+ensure_pnpm_deps() {
+  if [[ ! -d node_modules ]] || [[ package.json -nt node_modules/.modules.yaml ]] || [[ pnpm-lock.yaml -nt node_modules/.modules.yaml ]]; then
+    log "安装/更新 pnpm 依赖..."
+    pnpm install --frozen-lockfile
+    ok "pnpm 依赖已就绪"
   else
-    ok "npm 依赖已就绪"
+    ok "pnpm 依赖已就绪"
   fi
 }
 
@@ -194,7 +194,7 @@ clear_old_app_processes() {
 build_app() {
   log "构建应用..."
   rm -rf dist neutralino-dist/codex-ui
-  npm run neutralino:build
+  pnpm neutralino:build
   ok "构建完成"
 }
 
@@ -213,7 +213,7 @@ for arg in "$@"; do
   esac
 done
 ensure_node
-ensure_npm_deps
+ensure_pnpm_deps
 ensure_neutralino_runtime
 ensure_icons
 ensure_tray_support

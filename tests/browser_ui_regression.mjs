@@ -82,6 +82,8 @@ try {
         transform: getComputedStyle(refresh).transform,
       } : null,
       toolbarRect: toolbarRect ? { left: toolbarRect.left, width: toolbarRect.width } : null,
+      usagePeriods: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')]
+        .map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
       refreshCenterDelta: refreshRect && toolbarRect
         ? Number(((refreshRect.left + refreshRect.width / 2) - (toolbarRect.left + toolbarRect.width / 2)).toFixed(2))
         : null,
@@ -125,6 +127,9 @@ try {
     || companionBefore.sourceText.includes('Codex app-server')
     || companionBefore.primaryQuotaLabel !== '5 小时'
     || companionBefore.secondaryQuotaLabel !== '周额度'
+    || companionBefore.usagePeriods.length !== 3
+    || !companionBefore.usagePeriods.some((item) => item.includes('当前周期'))
+    || !companionBefore.usagePeriods.some((item) => item.includes('总 Token'))
     || !companionAfter.actionImage.includes('/expressions/')
     || !companionAfter.message.includes('点击互动')
     || persistedCompanion !== 'klee'
@@ -221,7 +226,7 @@ try {
   const analysis = await evaluate(send, `({
     providers: document.querySelectorAll('.provider-analysis-row').length,
     header: document.querySelector('.workspace-header')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
-    summary: [...document.querySelectorAll('.workspace-summary-strip--portfolio .workspace-metric')]
+    summary: [...document.querySelectorAll('.usage-workspace .usage-period-card')]
       .map((node) => node.textContent.replace(/\\s+/g, ' ').trim()),
     modelTitle: document.querySelector('.usage-detail-grid--portfolio .card-label')?.textContent ?? '',
   })`);
@@ -232,11 +237,29 @@ try {
     || !analysis.header.includes('6 个 Provider')
     || !analysis.header.includes('Analytics')
     || analysis.header.includes('比较不同 Provider 的使用贡献与本月成本')
-    || !analysis.summary.some((item) => item.includes('今日总 Token'))
-    || !analysis.summary.some((item) => item.includes('综合 API 估价'))
-    || !analysis.modelTitle.includes('本月跨公司模型用量')
+    || analysis.summary.length !== 3
+    || !analysis.summary.some((item) => item.includes('当前周期'))
+    || !analysis.summary.some((item) => item.includes('当月 Token'))
+    || !analysis.summary.some((item) => item.includes('总 Token'))
+    || !analysis.summary.every((item) => item.includes('估价'))
+    || !analysis.modelTitle.includes('当前周期跨公司模型用量')
   ) {
     throw new Error(`Usage analysis regression failed: ${JSON.stringify(analysis)}`);
+  }
+
+  await evaluate(send, `document.querySelector('.usage-workspace [data-period="total"]')?.click()`);
+  await waitForExpression(send, `document.querySelector('.provider-analysis-heading')?.textContent?.includes('总计')`);
+  const totalPeriod = await evaluate(send, `({
+    selected: document.querySelector('.usage-workspace [data-period="total"]')?.getAttribute('aria-selected'),
+    modelTitle: document.querySelector('.usage-detail-grid--portfolio .card-label')?.textContent ?? '',
+    heading: document.querySelector('.provider-analysis-heading')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+  })`);
+  if (
+    totalPeriod.selected !== 'true'
+    || !totalPeriod.modelTitle.includes('总计跨公司模型用量')
+    || !totalPeriod.heading.includes('总计')
+  ) {
+    throw new Error(`Usage period switch regression failed: ${JSON.stringify(totalPeriod)}`);
   }
 
   await evaluate(send, `(() => {

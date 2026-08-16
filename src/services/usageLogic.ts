@@ -21,6 +21,27 @@ export const EMPTY_WINDOW: WindowUsage = {
 
 export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
 
+export interface TokenUsageEvent {
+  timestamp_unix: number;
+  model: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface ParsedRolloutFile {
+  messages: number;
+  tokens: number;
+  modelMap: ModelTokenMap;
+  events: TokenUsageEvent[];
+  latestRateLimits: {
+    timestamp_unix: number;
+    primary: WindowUsage;
+    secondary: WindowUsage;
+  } | null;
+}
+
 const WEEK_MINUTES = 7 * 24 * 60;
 const WEEKLY_WINDOW_FLOOR = 6 * 24 * 60;
 
@@ -343,11 +364,14 @@ export function extractPayloadModel(payload: unknown): string | null {
   return null;
 }
 
-export function parseRolloutFile(content: string): { messages: number; tokens: number; modelMap: ModelTokenMap } {
+export function parseRolloutFile(content: string): ParsedRolloutFile {
   let messages = 0;
   let tokens = 0;
   let currentModel: string | undefined;
+  let previousCumulative: TokenCounters | null = null;
   const modelMap: ModelTokenMap = new Map();
+  const events: TokenUsageEvent[] = [];
+  let latestRateLimits: ParsedRolloutFile['latestRateLimits'] = null;
 
   for (const line of content.split('\n')) {
     const entry = parseJson(line);
@@ -355,21 +379,50 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
 
     const entryRecord = record(entry);
     const payload = record(entryRecord.payload);
+    const timestampUnix = parseEventTimestamp(entryRecord.timestamp ?? payload.timestamp);
     const payloadModel = extractPayloadModel(payload);
     if (payloadModel) currentModel = payloadModel;
     if (payload.type === 'token_count') {
       const info = record(payload.info);
-      const usageRaw = info.last_token_usage;
-      if (usageRaw) {
-        const usage = record(usageRaw);
+      const rateLimits = record(payload.rate_limits);
+      if (payload.rate_limits) {
+        const primary = parseLocalLimitWindow(rateLimits.primary, timestampUnix || undefined);
+        const secondary = parseLocalLimitWindow(rateLimits.secondary, timestampUnix || undefined);
+        if (primary || secondary) {
+          latestRateLimits = {
+            timestamp_unix: timestampUnix,
+            primary: primary ?? { ...EMPTY_WINDOW },
+            secondary: secondary ?? { ...EMPTY_WINDOW },
+          };
+        }
+      }
+
+      const cumulative = tokenCounters(info.total_token_usage);
+      const last = tokenCounters(info.last_token_usage);
+      let delta: TokenCounters | null = null;
+      if (cumulative) {
+        delta = previousCumulative && cumulative.total >= previousCumulative.total
+          ? subtractTokenCounters(cumulative, previousCumulative)
+          : cumulative;
+        previousCumulative = cumulative;
+      } else if (last) {
+        delta = last;
+      }
+
+      if (delta && delta.total > 0) {
         messages += 1;
-        const input = Number(usage.input_tokens ?? 0);
-        const cached = Math.min(Number(usage.cached_input_tokens ?? 0), input);
-        const output = Number(usage.output_tokens ?? 0);
-        const total = Math.max(Number(usage.total_tokens ?? 0), input + output);
-        tokens += total;
+        tokens += delta.total;
+        const model = currentModel ?? 'codex';
         // token_count events omit model; use last turn_context / settings model.
-        addModelUsage(modelMap, currentModel ?? 'codex', input, cached, output);
+        addModelUsage(modelMap, model, delta.input, delta.cached, delta.output);
+        events.push({
+          timestamp_unix: timestampUnix,
+          model,
+          input_tokens: delta.input,
+          cached_input_tokens: delta.cached,
+          output_tokens: delta.output,
+          total_tokens: delta.total,
+        });
         continue;
       }
     }
@@ -391,10 +444,56 @@ export function parseRolloutFile(content: string): { messages: number; tokens: n
       const total = Number(usage.total_tokens ?? usage.totalTokens ?? 0) || input + output;
       tokens += total;
       addModelUsage(modelMap, String(model), input, cached, output);
+      events.push({
+        timestamp_unix: timestampUnix,
+        model: String(model),
+        input_tokens: input,
+        cached_input_tokens: cached,
+        output_tokens: output,
+        total_tokens: total,
+      });
     }
   }
 
-  return { messages, tokens, modelMap };
+  return { messages, tokens, modelMap, events, latestRateLimits };
+}
+
+interface TokenCounters {
+  input: number;
+  cached: number;
+  output: number;
+  total: number;
+}
+
+function tokenCounters(raw: unknown): TokenCounters | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const usage = record(raw);
+  const input = nonNegativeNumber(usage.input_tokens ?? usage.inputTokens);
+  const cached = Math.min(nonNegativeNumber(usage.cached_input_tokens ?? usage.cachedInputTokens), input);
+  const output = nonNegativeNumber(usage.output_tokens ?? usage.outputTokens);
+  const total = Math.max(nonNegativeNumber(usage.total_tokens ?? usage.totalTokens), input + output);
+  return total > 0 ? { input, cached, output, total } : null;
+}
+
+function subtractTokenCounters(current: TokenCounters, previous: TokenCounters): TokenCounters {
+  const input = Math.max(0, current.input - previous.input);
+  const cached = Math.min(input, Math.max(0, current.cached - previous.cached));
+  const output = Math.max(0, current.output - previous.output);
+  const total = Math.max(0, current.total - previous.total, input + output);
+  return { input, cached, output, total };
+}
+
+function nonNegativeNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function parseEventTimestamp(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value > 10_000_000_000 ? value / 1000 : value);
+  }
+  const milliseconds = Date.parse(String(value ?? ''));
+  return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : 0;
 }
 
 export function parseLocalLimitWindow(raw: unknown, nowUnix = Math.floor(Date.now() / 1000)): WindowUsage | null {
@@ -513,7 +612,7 @@ export function mergeModelMap(target: ModelTokenMap, source: ModelTokenMap) {
   }
 }
 
-const PRICING_AS_OF = '2026-07-11';
+const PRICING_AS_OF = '2026-08-16';
 
 /**
  * Standard API-equivalent text-token prices in USD per 1M tokens.

@@ -21,13 +21,13 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Plus, X } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
-import type { AgentId, PeriodUsage, ProviderLocalUsage, UsageSnapshot, WindowUsage } from '../types';
+import type { AgentId, PeriodUsage, ProviderLocalUsage, UsagePeriodKey, UsageSnapshot, WindowUsage } from '../types';
 import { agentMeta, COMPANY_LIST } from '../services/agentCatalog';
 import { computeSpend, isWindowMissing } from '../services/usageLogic';
 import CodexUsageDashboard from './CodexUsageDashboard';
 import ModelList from './ModelList';
 import ProviderQuotaDashboard, { type DashboardDensity } from './ProviderQuotaDashboard';
-import SpendCard from './SpendCard';
+import UsagePeriodCards from './UsagePeriodCards';
 
 const STORAGE_KEY = 'codex-ui-dashboard-providers-v1';
 const DROP_ZONE_ID = 'provider-dashboard-dropzone';
@@ -280,6 +280,16 @@ function ProviderDashboardContent({
 }) {
   const meta = agentMeta(id);
   const periods = providerPeriods(id, data, local);
+  const [period, setPeriod] = useState<UsagePeriodKey>('current');
+  const selectedUsage = periods[period] ?? periods.month;
+  const currentQuota = id === 'codex'
+    ? (!isWindowMissing(data?.window_5h) ? data?.window_5h : data?.window_weekly)
+    : local?.remote && !local.remote.error && !isWindowMissing(local.remote.primary)
+      ? local.remote.primary
+      : undefined;
+  const currentValue = currentQuota?.limit
+    ? `${Math.round(currentQuota.percent)}%`
+    : formatTokenCompact(periods.current?.tokens ?? 0);
 
   return (
     <>
@@ -308,8 +318,39 @@ function ProviderDashboardContent({
 
       {density === 'detail' && periods.month && (
         <div className="provider-dashboard-extras">
-          <SpendCard spend={periods.spend} today={periods.today} month={periods.month} />
-          <ModelList models={periods.today?.models} monthModels={periods.month.models} title="活跃模型" />
+          <UsagePeriodCards
+            value={period}
+            onChange={setPeriod}
+            ariaLabel={`${meta.fullName} 用量周期`}
+            options={[
+              {
+                id: 'current',
+                label: '当前周期',
+                value: currentValue,
+                detail: currentQuota?.limit ? '官方额度消耗' : '本地 Token',
+                usage: periods.current ?? periods.month,
+              },
+              {
+                id: 'month',
+                label: '当月 Token',
+                value: formatTokenCompact(periods.month.tokens),
+                detail: `${periods.month.messages} 次消息`,
+                usage: periods.month,
+              },
+              {
+                id: 'total',
+                label: '总 Token',
+                value: formatTokenCompact(periods.total?.tokens ?? periods.month.tokens),
+                detail: '本地已记录',
+                usage: periods.total ?? periods.month,
+              },
+            ]}
+          />
+          <ModelList
+            models={selectedUsage?.models}
+            monthModels={selectedUsage?.models}
+            title={`${periodLabel(period)}活跃模型`}
+          />
         </div>
       )}
     </>
@@ -338,11 +379,15 @@ function providerPeriods(
   periodCopy: string;
   source: string;
   today?: PeriodUsage;
+  current?: PeriodUsage;
   month?: PeriodUsage;
+  total?: PeriodUsage;
   spend?: ReturnType<typeof computeSpend>;
 } {
   const today = id === 'codex' ? data?.today_local : local?.today;
+  const current = id === 'codex' ? data?.current_local : local?.current;
   const month = id === 'codex' ? data?.month_local : local?.month;
+  const total = id === 'codex' ? data?.total_local : local?.total;
   const spend = id === 'codex' ? data?.spend : month ? computeSpend(month) : undefined;
   const remote = local?.remote;
 
@@ -355,7 +400,9 @@ function providerPeriods(
       periodCopy: id === 'grok' ? '本周已使用 ' : '本周期已使用 ',
       source: remote.source,
       today,
+      current,
       month,
+      total,
       spend,
     };
   }
@@ -368,9 +415,23 @@ function providerPeriods(
     periodCopy: '本月已使用 ',
     source: local?.available ? agentMeta(id).localHint : '等待连接',
     today,
+    current: current ?? month,
     month,
+    total: total ?? month,
     spend,
   };
+}
+
+function formatTokenCompact(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(Math.round(value));
+}
+
+function periodLabel(period: UsagePeriodKey): string {
+  if (period === 'current') return '当前周期';
+  if (period === 'month') return '当月';
+  return '总计';
 }
 
 function monthWindow(tokens: number): WindowUsage {

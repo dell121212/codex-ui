@@ -17,14 +17,20 @@ export interface ProviderUsageSlice {
   color: string;
   available: boolean;
   today: PeriodUsage;
+  current: PeriodUsage;
   month: PeriodUsage;
+  total: PeriodUsage;
   spend: SpendInfo;
+  currentShare: number;
   monthShare: number;
+  totalShare: number;
 }
 
 export interface UsagePortfolio {
   today: PeriodUsage;
+  current: PeriodUsage;
   month: PeriodUsage;
+  total: PeriodUsage;
   spend: SpendInfo;
   providers: ProviderUsageSlice[];
   activeProviders: number;
@@ -83,6 +89,18 @@ export function aggregatePeriods(periods: PeriodUsage[]): PeriodUsage {
   };
 }
 
+export function summarizePeriodCost(period: PeriodUsage): {
+  usd: number;
+  unpricedModels: string[];
+} {
+  return {
+    usd: roundMoney(period.models.reduce((total, model) => total + (model.cost_usd ?? 0), 0)),
+    unpricedModels: period.models
+      .filter((model) => model.cost_usd === null)
+      .map((model) => model.model),
+  };
+}
+
 export function buildUsagePortfolio(
   data: UsageSnapshot | null,
   localProviders: ProviderLocalUsage[],
@@ -92,7 +110,13 @@ export function buildUsagePortfolio(
     const meta = agentMeta(id);
     const local = byProvider.get(id);
     const today = id === 'codex' ? data?.today_local ?? EMPTY_PERIOD : local?.today ?? EMPTY_PERIOD;
+    const current = id === 'codex'
+      ? data?.current_local ?? local?.current ?? today
+      : local?.current ?? local?.month ?? EMPTY_PERIOD;
     const month = id === 'codex' ? data?.month_local ?? EMPTY_PERIOD : local?.month ?? EMPTY_PERIOD;
+    const total = id === 'codex'
+      ? data?.total_local ?? local?.total ?? month
+      : local?.total ?? month;
     const spend = id === 'codex' && data?.spend ? data.spend : computeSpend(month);
     return {
       id,
@@ -104,24 +128,34 @@ export function buildUsagePortfolio(
         ? Boolean(data || local?.available || local?.authOk)
         : Boolean(local?.available || local?.authOk || local?.remote),
       today,
+      current,
       month,
+      total,
       spend,
     };
   });
 
   const today = aggregatePeriods(base.map((provider) => provider.today));
+  const current = aggregatePeriods(base.map((provider) => provider.current));
   const month = aggregatePeriods(base.map((provider) => provider.month));
+  const total = aggregatePeriods(base.map((provider) => provider.total));
+  const currentTotal = current.tokens;
   const monthTotal = month.tokens;
+  const lifetimeTotal = total.tokens;
   const providers = base
     .map((provider) => ({
       ...provider,
+      currentShare: currentTotal > 0 ? (provider.current.tokens / currentTotal) * 100 : 0,
       monthShare: monthTotal > 0 ? (provider.month.tokens / monthTotal) * 100 : 0,
+      totalShare: lifetimeTotal > 0 ? (provider.total.tokens / lifetimeTotal) * 100 : 0,
     }))
     .sort((a, b) => b.month.tokens - a.month.tokens);
 
   return {
     today,
+    current,
     month,
+    total,
     spend: {
       month_total_usd: roundMoney(base.reduce((total, provider) => total + provider.spend.month_total_usd, 0)),
       avg_daily_usd: roundMoney(base.reduce((total, provider) => total + provider.spend.avg_daily_usd, 0)),
@@ -133,7 +167,7 @@ export function buildUsagePortfolio(
     },
     providers,
     activeProviders: providers.filter((provider) => (
-      provider.available || provider.today.tokens > 0 || provider.month.tokens > 0
+      provider.available || provider.current.tokens > 0 || provider.month.tokens > 0 || provider.total.tokens > 0
     )).length,
   };
 }

@@ -21,5 +21,16 @@ export default defineConfig(async () => ({
     target: 'es2021',
     minify: 'esbuild',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('@appica') || id.includes('@radix-ui')) return 'appica-vendor';
+          if (id.includes('@dnd-kit')) return 'dnd-vendor';
+          if (id.includes('lucide-react')) return 'icons-vendor';
+          return 'vendor';
+        },
+      },
+    },
   },
 }));

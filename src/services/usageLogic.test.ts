@@ -55,7 +55,63 @@ describe('Codex session JSONL parsing', () => {
       output_tokens: 5,
     });
   });
+
+  it('uses cumulative token deltas and ignores rate-limit-only repeats', () => {
+    const content = [
+      {
+        timestamp: '2026-07-07T03:35:40.594Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-sol' },
+      },
+      tokenCountLine('2026-07-07T03:36:00.000Z', 80, 20, 100),
+      tokenCountLine('2026-07-07T03:37:00.000Z', 120, 30, 150, 40, 10, 50),
+      // Codex may re-emit the previous last_token_usage when only rate limits change.
+      tokenCountLine('2026-07-07T03:38:00.000Z', 120, 30, 150, 40, 10, 50),
+    ].map((line) => JSON.stringify(line)).join('\n');
+
+    const parsed = parseRolloutFile(content);
+
+    expect(parsed.messages).toBe(2);
+    expect(parsed.tokens).toBe(150);
+    expect(parsed.modelMap.get('gpt-5.6-sol')).toEqual({
+      input: 120,
+      cached: 0,
+      output: 30,
+    });
+  });
 });
+
+function tokenCountLine(
+  timestamp: string,
+  cumulativeInput: number,
+  cumulativeOutput: number,
+  cumulativeTotal: number,
+  lastInput = cumulativeInput,
+  lastOutput = cumulativeOutput,
+  lastTotal = cumulativeTotal,
+) {
+  return {
+    timestamp,
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          input_tokens: cumulativeInput,
+          cached_input_tokens: 0,
+          output_tokens: cumulativeOutput,
+          total_tokens: cumulativeTotal,
+        },
+        last_token_usage: {
+          input_tokens: lastInput,
+          cached_input_tokens: 0,
+          output_tokens: lastOutput,
+          total_tokens: lastTotal,
+        },
+      },
+    },
+  };
+}
 
 describe('local rate-limit fallback parsing', () => {
   it('parses active primary and secondary rate-limit windows', () => {
@@ -361,7 +417,7 @@ describe('API-equivalent cost estimation', () => {
     expect(computeSpend(enriched, new Date(2026, 6, 11))).toMatchObject({
       month_total_usd: 1.24,
       unpriced_models: [],
-      pricing_as_of: '2026-07-11',
+      pricing_as_of: '2026-08-16',
     });
   });
 

@@ -33,6 +33,7 @@ import {
   parseVibeActiveModel,
   parseVibeWhoAmI,
 } from './localProviders';
+import { mergeStableLocalProviders } from './usageContinuity';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
@@ -376,7 +377,13 @@ async function fetchSnapshot(
   let remoteLimitsOk = false;
 
   // Local filesystem capture first (no network).
-  const localOnly = await captureLocalProvidersOnly();
+  const capturedLocal = await captureLocalProvidersOnly();
+  const localOnly = mergeStableLocalProviders(
+    capturedLocal,
+    previous?.local_providers,
+    now.toISOString(),
+    previous?.fetched_at,
+  );
   // Phase A: reattach last known remote quota so UI never flashes empty bars.
   let local_providers = includeRemote
     ? localOnly
@@ -384,7 +391,9 @@ async function fetchSnapshot(
 
   const codexLocal = local_providers.find((p) => p.provider === 'codex');
   const today_local = codexLocal?.today ?? { ...EMPTY_LOCAL_PERIOD };
+  const current_local = codexLocal?.current ?? today_local;
   const month_local = codexLocal?.month ?? { ...EMPTY_LOCAL_PERIOD };
+  const total_local = codexLocal?.total ?? month_local;
   const spend = computeSpend(month_local);
 
   let window_5h: WindowUsage = { ...EMPTY_WINDOW };
@@ -502,7 +511,9 @@ async function fetchSnapshot(
     window_weekly,
     rate_limits,
     today_local,
+    current_local,
     month_local,
+    total_local,
     local_providers,
     banked_resets,
     spend,

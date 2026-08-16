@@ -14,6 +14,9 @@ import type {
   ProviderRemoteQuota,
   WindowUsage,
 } from '../types';
+import { captureCodexLocal } from './codexLocalUsage';
+import type { FileApi } from './localFileAccess';
+import { pathExists, walkFiles } from './localFileAccess';
 import {
   addModelUsage,
   buildPeriodUsage,
@@ -25,6 +28,9 @@ import {
   type ModelTokenMap,
 } from './usageLogic';
 
+export { captureCodexLocal } from './codexLocalUsage';
+export type { FileApi } from './localFileAccess';
+
 export const EMPTY_PERIOD: PeriodUsage = { messages: 0, tokens: 0, models: [] };
 
 const EMPTY_REMOTE_WINDOW: WindowUsage = {
@@ -34,12 +40,6 @@ const EMPTY_REMOTE_WINDOW: WindowUsage = {
   window_duration_mins: 0,
   reset_at_unix: 0,
   remaining_secs: 0,
-};
-
-type FileApi = {
-  readFile: (path: string) => Promise<string>;
-  readDirectory: (path: string) => Promise<Array<{ entry: string; type: string }>>;
-  getStats?: (path: string) => Promise<{ modifiedAt: number; size: number }>;
 };
 
 export interface LocalProviderProbe {
@@ -90,7 +90,9 @@ function emptyProvider(id: AgentId, available = false, authOk?: boolean): Provid
     hasTokens: false,
     authOk,
     today: { ...EMPTY_PERIOD },
+    current: { ...EMPTY_PERIOD },
     month: { ...EMPTY_PERIOD },
+    total: { ...EMPTY_PERIOD },
   };
 }
 
@@ -102,122 +104,6 @@ function isSameDay(a: Date, b: Date): boolean {
 
 function inMonth(d: Date, monthStart: Date): boolean {
   return d.getFullYear() === monthStart.getFullYear() && d.getMonth() === monthStart.getMonth();
-}
-
-async function pathExists(api: FileApi, path: string): Promise<boolean> {
-  try {
-    await api.readDirectory(path);
-    return true;
-  } catch {
-    try {
-      await api.readFile(path);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-/** Recursively list files under dir whose name matches predicate (depth-limited). */
-async function walkFiles(
-  api: FileApi,
-  dir: string,
-  match: (name: string) => boolean,
-  depth = 0,
-  maxDepth = 6,
-): Promise<string[]> {
-  if (depth > maxDepth) return [];
-  let entries: Array<{ entry: string; type: string }>;
-  try {
-    entries = await api.readDirectory(dir);
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const ent of entries) {
-    const full = `${dir}/${ent.entry}`;
-    if (ent.type === 'DIRECTORY') {
-      out.push(...await walkFiles(api, full, match, depth + 1, maxDepth));
-    } else if (ent.type === 'FILE' && match(ent.entry)) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
-// ─── Codex ───────────────────────────────────────────────────────────────────
-
-export async function captureCodexLocal(
-  api: FileApi,
-  home: string,
-  now = new Date(),
-): Promise<ProviderLocalUsage> {
-  const root = `${home}/.codex`;
-  const available = await pathExists(api, root);
-  if (!available) return emptyProvider('codex', false);
-
-  let authOk: boolean | undefined;
-  try {
-    const raw = await api.readFile(`${home}/.codex/auth.json`);
-    const parsed = JSON.parse(raw) as { tokens?: { access_token?: string }; access_token?: string };
-    const token = parsed?.tokens?.access_token ?? parsed?.access_token;
-    authOk = typeof token === 'string' && token.length > 0;
-  } catch {
-    authOk = false;
-  }
-
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthMap: ModelTokenMap = new Map();
-  const todayMap: ModelTokenMap = new Map();
-  let monthMessages = 0;
-  let monthTokens = 0;
-  let todayMessages = 0;
-  let todayTokens = 0;
-
-  for (let d = new Date(monthStart); d <= now; d.setDate(d.getDate() + 1)) {
-    const day = new Date(d);
-    const y = String(day.getFullYear()).padStart(4, '0');
-    const m = String(day.getMonth() + 1).padStart(2, '0');
-    const dd = String(day.getDate()).padStart(2, '0');
-    const dir = `${home}/.codex/sessions/${y}/${m}/${dd}`;
-    let entries: Array<{ entry: string; type: string }> = [];
-    try {
-      entries = await api.readDirectory(dir);
-    } catch {
-      continue;
-    }
-    const isToday = isSameDay(day, now);
-    for (const ent of entries) {
-      if (ent.type !== 'FILE' || !ent.entry.startsWith('rollout-') || !ent.entry.endsWith('.jsonl')) {
-        continue;
-      }
-      try {
-        const parsed = parseRolloutFile(await api.readFile(`${dir}/${ent.entry}`));
-        monthMessages += parsed.messages;
-        monthTokens += parsed.tokens;
-        mergeModelMap(monthMap, parsed.modelMap);
-        if (isToday) {
-          todayMessages += parsed.messages;
-          todayTokens += parsed.tokens;
-          mergeModelMap(todayMap, parsed.modelMap);
-        }
-      } catch {
-        // ignore unreadable session
-      }
-    }
-  }
-
-  const today = enrichWithCosts(buildPeriodUsage(todayMessages, todayTokens, todayMap));
-  const month = enrichWithCosts(buildPeriodUsage(monthMessages, monthTokens, monthMap));
-  return {
-    provider: 'codex',
-    available: true,
-    hasTokens: month.tokens > 0 || today.tokens > 0,
-    authOk,
-    authPath: `${home}/.codex/auth.json`,
-    today,
-    month,
-  };
 }
 
 // ─── Grok ────────────────────────────────────────────────────────────────────
@@ -376,6 +262,7 @@ export async function captureGrokLocal(
   // tokens stay 0 — official Grok quota is remote billing only.
   const todayPeriod = enrichWithCosts(buildPeriodUsage(todayMessages, 0, new Map()));
   const monthPeriod = enrichWithCosts(buildPeriodUsage(monthMessages, 0, new Map()));
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
   return {
     provider: 'grok',
@@ -386,7 +273,10 @@ export async function captureGrokLocal(
     authPath: `${home}/.grok/auth.json`,
     lastActiveAt,
     today: todayPeriod,
+    current: monthPeriod,
     month: monthPeriod,
+    total: monthPeriod,
+    current_period_end: Math.floor(nextMonth.getTime() / 1000),
   };
 }
 
@@ -725,14 +615,18 @@ export async function captureMistralVibeLocal(
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthMap: ModelTokenMap = new Map();
   const todayMap: ModelTokenMap = new Map();
+  const totalMap: ModelTokenMap = new Map();
   let monthMessages = 0;
   let monthTokens = 0;
   let todayMessages = 0;
   let todayTokens = 0;
+  let totalMessages = 0;
+  let totalTokens = 0;
   let lastActiveAt: string | undefined;
   // Prefer Vibe's own session_cost when present (more accurate than re-pricing).
   let monthCost = 0;
   let todayCost = 0;
+  let totalCost = 0;
 
   const metas = await walkFiles(api, `${root}/logs/session`, (n) => n === 'meta.json', 0, 4);
   for (const metaPath of metas) {
@@ -753,10 +647,16 @@ export async function captureMistralVibeLocal(
     // Calendar month only — free-tier quota is monthly, not rolling 90d / context window.
     const inThisMonth = inMonth(when, monthStart);
     const isToday = isSameDay(when, now);
-    if (!inThisMonth && !isToday) continue;
 
     const modelMap: ModelTokenMap = new Map();
     addModelUsage(modelMap, parsed.model, parsed.input, 0, parsed.output);
+
+    totalMessages += parsed.messages;
+    totalTokens += parsed.tokens;
+    mergeModelMap(totalMap, modelMap);
+    if (parsed.cost != null) totalCost += parsed.cost;
+
+    if (!inThisMonth && !isToday) continue;
 
     if (inThisMonth) {
       monthMessages += parsed.messages;
@@ -774,6 +674,7 @@ export async function captureMistralVibeLocal(
 
   let todayPeriod = enrichWithCosts(buildPeriodUsage(todayMessages, todayTokens, todayMap));
   let monthPeriod = enrichWithCosts(buildPeriodUsage(monthMessages, monthTokens, monthMap));
+  let totalPeriod = enrichWithCosts(buildPeriodUsage(totalMessages, totalTokens, totalMap));
 
   // If Vibe reported session_cost, prefer that for the single-model aggregate.
   if (monthCost > 0 && monthPeriod.models.length === 1) {
@@ -788,6 +689,12 @@ export async function captureMistralVibeLocal(
       models: [{ ...todayPeriod.models[0], cost_usd: round4(todayCost) }],
     };
   }
+  if (totalCost > 0 && totalPeriod.models.length === 1) {
+    totalPeriod = {
+      ...totalPeriod,
+      models: [{ ...totalPeriod.models[0], cost_usd: round4(totalCost) }],
+    };
+  }
 
   // Local month tokens until remote enrich fills official free-tier month headers.
   const remote = buildMistralTokenQuota({
@@ -798,12 +705,15 @@ export async function captureMistralVibeLocal(
   return {
     provider: 'mistral',
     available: true,
-    hasTokens: monthPeriod.tokens > 0 || todayPeriod.tokens > 0,
+    hasTokens: totalPeriod.tokens > 0,
     authOk,
     authPath: `${home}/.vibe/.env`,
     lastActiveAt,
     today: todayPeriod,
+    current: monthPeriod,
     month: monthPeriod,
+    total: totalPeriod,
+    current_period_end: Math.floor(new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime() / 1000),
     remote,
   };
 }
@@ -847,10 +757,13 @@ export async function captureGenericLocal(
   // Best-effort: look for any *.jsonl under roots and try common token shapes.
   const monthMap: ModelTokenMap = new Map();
   const todayMap: ModelTokenMap = new Map();
+  const totalMap: ModelTokenMap = new Map();
   let monthMessages = 0;
   let monthTokens = 0;
   let todayMessages = 0;
   let todayTokens = 0;
+  let totalMessages = 0;
+  let totalTokens = 0;
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -863,6 +776,9 @@ export async function captureGenericLocal(
         // Reuse Codex rollout parser — works for similar token_count shapes.
         const parsed = parseRolloutFile(await api.readFile(file));
         if (parsed.tokens <= 0) continue;
+        totalMessages += parsed.messages;
+        totalTokens += parsed.tokens;
+        mergeModelMap(totalMap, parsed.modelMap);
         // Without reliable mtime API in all environments, attribute to month.
         // If Neutralino getStats available, refine day bucket.
         let when = now;
@@ -893,13 +809,17 @@ export async function captureGenericLocal(
 
   const today = enrichWithCosts(buildPeriodUsage(todayMessages, todayTokens, todayMap));
   const month = enrichWithCosts(buildPeriodUsage(monthMessages, monthTokens, monthMap));
+  const total = enrichWithCosts(buildPeriodUsage(totalMessages, totalTokens, totalMap));
   return {
     provider: probe.id,
     available: true,
-    hasTokens: month.tokens > 0 || today.tokens > 0,
+    hasTokens: total.tokens > 0 || month.tokens > 0 || today.tokens > 0,
     authOk,
     today,
+    current: month,
     month,
+    total,
+    current_period_end: Math.floor(new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime() / 1000),
   };
 }
 

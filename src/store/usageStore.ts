@@ -185,17 +185,31 @@ function previewSnapshot(): UsageSnapshot {
       },
     ],
   };
+  const scalePeriod = (period: PeriodUsage, multiplier: number): PeriodUsage => ({
+    messages: period.messages * multiplier,
+    tokens: period.tokens * multiplier,
+    models: period.models.map((model) => ({
+      ...model,
+      input_tokens: model.input_tokens * multiplier,
+      cached_input_tokens: model.cached_input_tokens * multiplier,
+      output_tokens: model.output_tokens * multiplier,
+      cost_usd: model.cost_usd == null ? null : model.cost_usd * multiplier,
+    })),
+  });
   const previewProvider = (
     provider: ProviderLocalUsage['provider'],
     todayUsage: PeriodUsage,
     monthUsage: PeriodUsage,
+    totalUsage: PeriodUsage = scalePeriod(monthUsage, 3),
   ): ProviderLocalUsage => ({
     provider,
     available: true,
     hasTokens: monthUsage.tokens > 0,
     authOk: true,
     today: todayUsage,
+    current: todayUsage,
     month: monthUsage,
+    total: totalUsage,
   });
   const usagePeriod = (
     messages: number,
@@ -285,7 +299,9 @@ function previewSnapshot(): UsageSnapshot {
       plan_type: 'plus',
     }],
     today_local: today,
+    current_local: today,
     month_local: month,
+    total_local: scalePeriod(month, 3),
     local_providers: localProviders,
     banked_resets: {
       available: 2,

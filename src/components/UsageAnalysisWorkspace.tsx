@@ -1,9 +1,9 @@
-import { useMemo, type CSSProperties } from 'react';
-import type { ProviderLocalUsage, UsageSnapshot } from '../types';
-import { buildUsagePortfolio } from '../services/usageAggregation';
+import { useMemo, useState, type CSSProperties } from 'react';
+import type { ProviderLocalUsage, UsagePeriodKey, UsageSnapshot } from '../types';
+import { buildUsagePortfolio, summarizePeriodCost } from '../services/usageAggregation';
 import ModelList from './ModelList';
 import QuotaList from './QuotaList';
-import SpendCard from './SpendCard';
+import UsagePeriodCards from './UsagePeriodCards';
 
 interface Props {
   data: UsageSnapshot | null;
@@ -11,35 +11,66 @@ interface Props {
 }
 
 export default function UsageAnalysisWorkspace({ data, providers }: Props) {
+  const [period, setPeriod] = useState<UsagePeriodKey>('current');
   const portfolio = useMemo(
     () => buildUsagePortfolio(data, providers),
     [data, providers],
   );
-  const codexModels = [
-    ...(data?.today_local.models ?? []),
-    ...(data?.month_local.models ?? []),
-  ];
+  const selectedUsage = portfolio[period];
+  const selectedProviders = [...portfolio.providers].sort((a, b) => b[period].tokens - a[period].tokens);
+  const totalTokens = selectedUsage.tokens;
+  const selectedLabel = period === 'current' ? '当前周期' : period === 'month' ? '当月' : '总计';
+  const codexModels = data?.total_local?.models ?? data?.month_local.models ?? [];
 
   return (
     <div className="usage-workspace usage-portfolio">
-      <section className="workspace-summary-strip workspace-summary-strip--portfolio">
-        <MetricTile label="今日总 Token" value={fmtCompact(portfolio.today.tokens)} detail={`${portfolio.today.messages} 次消息`} />
-        <MetricTile label="本月总 Token" value={fmtCompact(portfolio.month.tokens)} detail={`${portfolio.month.models.length} 个模型`} />
-        <MetricTile label="活跃 Provider" value={String(portfolio.activeProviders)} detail={`共监测 ${portfolio.providers.length} 家`} />
-        <MetricTile label="综合 API 估价" value={`$${portfolio.spend.month_total_usd.toFixed(2)}`} detail="本月等价成本" />
-      </section>
+      <UsagePeriodCards
+        value={period}
+        onChange={setPeriod}
+        options={[
+          {
+            id: 'current',
+            label: '当前周期',
+            value: fmtCompact(portfolio.current.tokens),
+            detail: `${portfolio.current.messages} 次消息`,
+            usage: portfolio.current,
+          },
+          {
+            id: 'month',
+            label: '当月 Token',
+            value: fmtCompact(portfolio.month.tokens),
+            detail: `${portfolio.month.models.length} 个模型`,
+            usage: portfolio.month,
+          },
+          {
+            id: 'total',
+            label: '总 Token',
+            value: fmtCompact(portfolio.total.tokens),
+            detail: '本地已记录',
+            usage: portfolio.total,
+          },
+        ]}
+      />
 
       <section className="card provider-analysis-card" aria-label="Provider 用量贡献">
         <div className="provider-analysis-heading">
           <div>
             <strong>Provider 贡献</strong>
-            <span>按本月 Token 排序</span>
+            <span>按{selectedLabel} Token 排序</span>
           </div>
-          <span>{fmtCompact(portfolio.month.tokens)} Token</span>
+          <span>{selectedLabel} · {fmtCompact(totalTokens)} Token</span>
         </div>
 
         <div className="provider-analysis-list">
-          {portfolio.providers.map((provider) => (
+          {selectedProviders.map((provider) => {
+            const usage = provider[period];
+            const estimate = summarizePeriodCost(usage);
+            const share = period === 'current'
+              ? provider.currentShare
+              : period === 'month'
+                ? provider.monthShare
+                : provider.totalShare;
+            return (
             <div className="provider-analysis-row" key={provider.id}>
               <div className="provider-analysis-identity">
                 <span
@@ -50,52 +81,40 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
                 </span>
                 <span>
                   <strong>{provider.fullName}</strong>
-                  <small>{provider.month.tokens > 0 ? `${provider.month.messages} 次消息` : '暂无本地用量'}</small>
+                  <small>{usage.tokens > 0 ? `${usage.messages} 次消息` : '暂无本地用量'}</small>
                 </span>
               </div>
-              <AnalysisMetric label="今日" value={fmtCompact(provider.today.tokens)} />
-              <AnalysisMetric label="本月" value={fmtCompact(provider.month.tokens)} />
-              <AnalysisMetric label="估价" value={`$${provider.spend.month_total_usd.toFixed(2)}`} />
+              <AnalysisMetric label={selectedLabel} value={fmtCompact(usage.tokens)} />
+              <AnalysisMetric label="估价" value={`~$${estimate.usd.toFixed(2)}`} />
               <div className="provider-analysis-share">
                 <div>
                   <span>贡献</span>
-                  <strong>{provider.monthShare.toFixed(provider.monthShare >= 10 ? 0 : 1)}%</strong>
+                  <strong>{share.toFixed(share >= 10 ? 0 : 1)}%</strong>
                 </div>
                 <div className="provider-analysis-track">
                   <span
                     style={{
-                      width: `${Math.max(provider.monthShare > 0 ? 2 : 0, provider.monthShare)}%`,
+                      width: `${Math.max(share > 0 ? 2 : 0, share)}%`,
                       background: provider.color,
                     }}
                   />
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
-      <div className="usage-detail-grid usage-detail-grid--portfolio">
+      <div className="usage-detail-grid usage-detail-grid--portfolio usage-detail-grid--single">
         <ModelList
-          models={portfolio.today.models}
-          monthModels={portfolio.month.models}
-          title="本月跨公司模型用量"
-          preferMonth
+          models={selectedUsage.models}
+          monthModels={selectedUsage.models}
+          title={`${selectedLabel}跨公司模型用量`}
         />
-        <SpendCard spend={portfolio.spend} today={portfolio.today} month={portfolio.month} />
       </div>
 
       <QuotaList buckets={data?.rate_limits} usedModels={codexModels} title="OpenAI 独立模型额度" />
-    </div>
-  );
-}
-
-function MetricTile({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="workspace-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
     </div>
   );
 }

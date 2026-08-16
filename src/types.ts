@@ -30,6 +30,8 @@ export interface PeriodUsage {
   models: ModelUsage[];
 }
 
+export type UsagePeriodKey = 'current' | 'month' | 'total';
+
 export interface BankedResets {
   available: number | null;
   credits: ResetCredit[];
@@ -105,7 +107,13 @@ export interface ProviderLocalUsage {
   authPath?: string;
   lastActiveAt?: string;
   today: PeriodUsage;
+  /** Local token usage attributed to the Provider's active quota window. */
+  current: PeriodUsage;
   month: PeriodUsage;
+  /** All locally recorded usage available to this app. */
+  total: PeriodUsage;
+  /** Stable identity for deciding whether a current-period counter may regress. */
+  current_period_end?: number;
   /** Official remote quota when the company exposes an API (Grok billing). */
   remote?: ProviderRemoteQuota;
 }
@@ -118,7 +126,9 @@ export interface UsageSnapshot {
   rate_limits: RateLimitBucket[];
   /** Codex local usage (backward compatible). */
   today_local: PeriodUsage;
+  current_local: PeriodUsage;
   month_local: PeriodUsage;
+  total_local: PeriodUsage;
   /** Multi-company local capture. */
   local_providers: ProviderLocalUsage[];
   banked_resets: BankedResets;

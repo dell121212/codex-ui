@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PeriodUsage, ProviderLocalUsage, UsageSnapshot } from '../types';
-import { aggregatePeriods, buildUsagePortfolio } from './usageAggregation';
+import { aggregatePeriods, buildUsagePortfolio, summarizePeriodCost } from './usageAggregation';
 
 function period(tokens: number, messages: number, model: string, cost: number | null): PeriodUsage {
   return {
@@ -32,12 +32,26 @@ describe('multi-provider usage aggregation', () => {
     });
   });
 
+  it('keeps captured estimates and reports unpriced models per period', () => {
+    const priced = period(1_000, 2, 'priced-model', 1.25);
+    const unpriced = period(2_000, 3, 'future-model', null);
+
+    expect(summarizePeriodCost(aggregatePeriods([priced, unpriced]))).toEqual({
+      usd: 1.25,
+      unpricedModels: ['future-model'],
+    });
+  });
+
   it('uses the snapshot Codex period once and aggregates every provider', () => {
     const codex = period(1_000, 4, 'gpt-5', 5);
     const claude = period(2_000, 6, 'claude-sonnet', 3);
+    const codexTotal = period(4_000, 12, 'gpt-5', 20);
+    const claudeTotal = period(6_000, 18, 'claude-sonnet', 9);
     const data = {
       today_local: codex,
+      current_local: codex,
       month_local: codex,
+      total_local: codexTotal,
       spend: {
         month_total_usd: 5,
         avg_daily_usd: 1,
@@ -52,14 +66,18 @@ describe('multi-provider usage aggregation', () => {
         available: true,
         hasTokens: true,
         today: codex,
+        current: codex,
         month: codex,
+        total: codexTotal,
       },
       {
         provider: 'claude',
         available: true,
         hasTokens: true,
         today: claude,
+        current: claude,
         month: claude,
+        total: claudeTotal,
       },
     ] as ProviderLocalUsage[];
 
@@ -67,8 +85,12 @@ describe('multi-provider usage aggregation', () => {
 
     expect(portfolio.month.tokens).toBe(3_000);
     expect(portfolio.month.messages).toBe(10);
+    expect(portfolio.current.tokens).toBe(3_000);
+    expect(portfolio.total.tokens).toBe(10_000);
     expect(portfolio.providers.find((provider) => provider.id === 'codex')?.monthShare)
       .toBeCloseTo(33.33, 1);
+    expect(portfolio.providers.find((provider) => provider.id === 'claude')?.totalShare)
+      .toBe(60);
     expect(portfolio.activeProviders).toBe(2);
   });
 });

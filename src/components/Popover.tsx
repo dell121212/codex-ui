@@ -1,14 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useMemo } from 'react';
 
 import { useStore } from '../store/usageStore';
 
 import AppToolbar, { type WorkspaceId } from './AppToolbar';
 import DashboardComposer from './DashboardComposer';
-import ProvidersWorkspace from './ProvidersWorkspace';
 import SetupBanner   from './SetupBanner';
-import SettingsPanel from './SettingsPanel';
-import UsageAnalysisWorkspace from './UsageAnalysisWorkspace';
 import WorkspaceCompanion from './WorkspaceCompanion';
+
+const ProvidersWorkspace = lazy(() => import('./ProvidersWorkspace'));
+const SettingsPanel = lazy(() => import('./SettingsPanel'));
+const UsageAnalysisWorkspace = lazy(() => import('./UsageAnalysisWorkspace'));
 
 const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; description: string }> = {
   overview: {
@@ -104,21 +105,23 @@ export default function Popover() {
               </div>
             )}
 
-            {workspace === 'usage' && (
-              <UsageAnalysisWorkspace
-                data={data}
-                providers={localProviders}
-              />
-            )}
+            <Suspense fallback={<div className="workspace-loading" role="status">正在加载工作区…</div>}>
+              {workspace === 'usage' && (
+                <UsageAnalysisWorkspace
+                  data={data}
+                  providers={localProviders}
+                />
+              )}
 
-            {workspace === 'providers' && (
-              <ProvidersWorkspace
-                providers={localProviders}
-                onOpenProvider={() => setWorkspace('usage')}
-              />
-            )}
+              {workspace === 'providers' && (
+                <ProvidersWorkspace
+                  providers={localProviders}
+                  onOpenProvider={() => setWorkspace('usage')}
+                />
+              )}
 
-            {workspace === 'settings' && <SettingsPanel embedded />}
+              {workspace === 'settings' && <SettingsPanel embedded />}
+            </Suspense>
           </div>
         </div>
       </main>

@@ -110,7 +110,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
             重新检测
           </Button>
           <div className="settings-hint">
-            程序会在启动和刷新时自动读取 Codex CLI token。未登录时，在终端运行 codex login 后点重新检测。
+            自动读取 Codex CLI token；未登录时运行 codex login 后重新检测。
           </div>
         </div>
 
@@ -145,7 +145,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
           <div className="settings-row">
             <div>
               <div className="settings-row-label">开机自启</div>
-              <div className="settings-row-sub">发布版可随登录自动启动</div>
+              <div className="settings-row-sub">登录后启动</div>
             </div>
             <Switch
               size="md"
@@ -157,7 +157,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
           <div className="settings-row" style={{ marginTop: 10 }}>
             <div>
               <div className="settings-row-label">用量提醒</div>
-              <div className="settings-row-sub">任一有效额度窗口达到 90% 时通知</div>
+              <div className="settings-row-sub">额度达 90% 时通知</div>
             </div>
             <Switch
               size="md"

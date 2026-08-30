@@ -1,119 +1,136 @@
-/* OpenDesign warm-editorial tokens mapped onto Appica's semantic contract. */
+/* OpenDesign contract: OmniRoute dark semantic tokens for Appica primitives. */
 :root,
-.light {
-  color-scheme: light;
+.dark {
+  color-scheme: dark;
 
-  --foreground: #1c1a17;
-  --foreground-subtle: #a39a92;
-  --foreground-muted: #8a817a;
-  --foreground-strong: #2f2b27;
-  --foreground-emphasis: #1c1a17;
-  --foreground-intense: #11100e;
-  --foreground-inverse: #ffffff;
+  --foreground: #e6e6ef;
+  --foreground-subtle: #a1a1aa;
+  --foreground-muted: #8f93a1;
+  --foreground-strong: #f4f4f8;
+  --foreground-emphasis: #ffffff;
+  --foreground-intense: #ffffff;
+  --foreground-inverse: #0b0e14;
 
-  --background: #faf7f2;
-  --background-subtle: #ffffff;
-  --background-muted: #f3eee8;
-  --background-strong: #e8dfd6;
-  --background-inverse: #1c1a17;
+  --background: #0b0e14;
+  --background-subtle: #111520;
+  --background-muted: #161b22;
+  --background-strong: #1c2230;
+  --background-inverse: #f4f4f8;
 
-  --border: #ded5cc;
-  --border-muted: #ebe4dd;
-  --border-strong: #c8bcb1;
-  --border-emphasis: #a39a92;
-  --border-intense: #8a817a;
-  --border-inverse: #2f2b27;
-  --border-overlay: #ebe4dd;
+  --border: rgb(255 255 255 / 8%);
+  --border-muted: rgb(255 255 255 / 5%);
+  --border-strong: rgb(255 255 255 / 14%);
+  --border-emphasis: rgb(255 255 255 / 20%);
+  --border-intense: rgb(255 255 255 / 28%);
+  --border-inverse: rgb(11 14 20 / 60%);
+  --border-overlay: rgb(255 255 255 / 16%);
 
-  --primary: #c0512f;
-  --primary-subtle: #fbede7;
-  --primary-soft: #f3d8cd;
-  --primary-muted: #d8896e;
-  --primary-strong: #a84225;
+  --primary: #e54d5e;
+  --primary-subtle: rgb(229 77 94 / 12%);
+  --primary-soft: rgb(229 77 94 / 20%);
+  --primary-muted: #f08b96;
+  --primary-strong: #c93d4e;
   --primary-foreground: #ffffff;
 
-  --secondary: #2f5b4f;
-  --secondary-subtle: #edf4f1;
-  --secondary-soft: #d7e5df;
-  --secondary-muted: #8aaca1;
-  --secondary-strong: #24483e;
-  --secondary-emphasis: #2f5b4f;
-  --secondary-intense: #1d3932;
+  --secondary: #8b5cf6;
+  --secondary-subtle: rgb(139 92 246 / 12%);
+  --secondary-soft: rgb(139 92 246 / 20%);
+  --secondary-muted: #b9a0ff;
+  --secondary-strong: #7041d7;
+  --secondary-emphasis: #a78bfa;
+  --secondary-intense: #c4b5fd;
   --secondary-foreground: #ffffff;
 
-  --success: #2f5b4f;
-  --success-subtle: #edf4f1;
-  --success-soft: #d7e5df;
-  --success-muted: #8aaca1;
-  --success-strong: #24483e;
-  --success-emphasis: #2f5b4f;
-  --success-intense: #1d3932;
-  --success-foreground: #ffffff;
+  --success: #22c55e;
+  --success-subtle: rgb(34 197 94 / 12%);
+  --success-soft: rgb(34 197 94 / 20%);
+  --success-muted: #86efac;
+  --success-strong: #16a34a;
+  --success-emphasis: #4ade80;
+  --success-intense: #bbf7d0;
+  --success-foreground: #04130a;
 
-  --warning: #c6812f;
-  --warning-subtle: #fdf3e6;
-  --warning-soft: #f7e1c5;
-  --warning-muted: #dfa96a;
-  --warning-strong: #a66522;
-  --warning-emphasis: #c6812f;
-  --warning-intense: #824f18;
-  --warning-foreground: #1c1a17;
+  --warning: #f59e0b;
+  --warning-subtle: rgb(245 158 11 / 12%);
+  --warning-soft: rgb(245 158 11 / 20%);
+  --warning-muted: #fcd34d;
+  --warning-strong: #d97706;
+  --warning-emphasis: #fbbf24;
+  --warning-intense: #fde68a;
+  --warning-foreground: #1c1202;
 
-  --error: #b7483d;
-  --error-subtle: #fbecea;
-  --error-soft: #f4d4d0;
-  --error-muted: #d98b83;
-  --error-strong: #98382f;
-  --error-emphasis: #b7483d;
-  --error-intense: #782a24;
-  --error-foreground: #ffffff;
+  --error: #ef4444;
+  --error-subtle: rgb(239 68 68 / 12%);
+  --error-soft: rgb(239 68 68 / 20%);
+  --error-muted: #fca5a5;
+  --error-strong: #dc2626;
+  --error-emphasis: #f87171;
+  --error-intense: #fecaca;
+  --error-foreground: #200404;
 
-  --info: #52738a;
-  --info-subtle: #edf3f6;
-  --info-soft: #d7e4ea;
-  --info-muted: #91aab9;
-  --info-strong: #3f5c70;
-  --info-emphasis: #52738a;
-  --info-intense: #304858;
-  --info-foreground: #ffffff;
+  --info: #60a5fa;
+  --info-subtle: rgb(96 165 250 / 12%);
+  --info-soft: rgb(96 165 250 / 20%);
+  --info-muted: #93c5fd;
+  --info-strong: #3b82f6;
+  --info-emphasis: #60a5fa;
+  --info-intense: #bfdbfe;
+  --info-foreground: #061325;
 
-  --focus-ring: #d8896e;
-  --focus-ring-input: #c8bcb1;
-  --focus-ring-primary: rgb(192 81 47 / 35%);
-  --focus-ring-secondary: rgb(47 91 79 / 35%);
-  --focus-ring-error: rgb(183 72 61 / 35%);
-  --focus-ring-success: rgb(47 91 79 / 35%);
-  --focus-ring-warning: rgb(198 129 47 / 35%);
-  --focus-ring-info: rgb(82 115 138 / 35%);
-  --focus-ring-light: rgb(255 255 255 / 40%);
+  --focus-ring: rgb(229 77 94 / 70%);
+  --focus-ring-input: rgb(96 165 250 / 72%);
+  --focus-ring-primary: rgb(229 77 94 / 40%);
+  --focus-ring-secondary: rgb(139 92 246 / 40%);
+  --focus-ring-error: rgb(239 68 68 / 42%);
+  --focus-ring-success: rgb(34 197 94 / 42%);
+  --focus-ring-warning: rgb(245 158 11 / 42%);
+  --focus-ring-info: rgb(96 165 250 / 42%);
+  --focus-ring-light: rgb(255 255 255 / 55%);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --font-sans: Inter, 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SFMono-Regular', 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;
   --border-width: 1px;
-  --radius: 0.625rem;
-  --shadow-color: rgb(55 45 38 / 10%);
-  --selection-color: rgb(192 81 47 / 18%);
+  --radius: 10px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-dialog: 14px;
+  --radius-pill: 999px;
+  --shadow-color: rgb(0 0 0 / 32%);
+  --selection-color: rgb(229 77 94 / 24%);
 }
 
+/* Appica overlay surfaces stay opaque and readable on the graph-paper shell. */
 [data-slot='popover-content'],
-[data-slot='tooltip-content'] {
-  box-shadow: 0 8px 24px rgb(55 45 38 / 10%);
+[data-slot='tooltip-content'],
+[data-slot='alert-dialog-popup'] {
+  color: var(--foreground);
+  border-color: var(--border-strong);
+  background: var(--background-muted);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+  backdrop-filter: none;
 }
 
 [data-slot='alert-dialog-backdrop'] {
-  background: rgb(28 26 23 / 32%);
+  background: rgb(0 0 0 / 64%);
   backdrop-filter: none;
 }
 
 [data-slot='alert-dialog-popup'].appica-confirm-dialog {
-  width: min(320px, 100%);
+  width: min(360px, calc(100vw - 32px));
   padding: 0;
-  border: 1px solid var(--border);
-  background: var(--background-subtle);
-  box-shadow: 0 12px 32px rgb(55 45 38 / 14%);
-  backdrop-filter: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-dialog);
+  background: var(--background-muted);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 44%);
 }
 
 .appica-confirm-dialog .confirm-title {
-  font-family: 'Source Serif 4', Georgia, serif;
+  color: var(--foreground-strong);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 680;
+}
+
+.appica-confirm-dialog .confirm-copy {
+  color: var(--foreground-subtle);
 }

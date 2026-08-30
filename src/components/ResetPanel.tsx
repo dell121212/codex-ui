@@ -70,20 +70,20 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
         <div className="reset-meta">
           <div className="reset-title">
             <RotateCcw size={12} aria-hidden />
-            <span>手动重置</span>
+            <span>官方重置</span>
             {embedded && <strong>{available == null ? '—' : available} 次</strong>}
           </div>
           <div className="reset-subtitle">
             {embedded
               ? available == null
-                ? '重置次数暂不可用'
-                : `可用次数 · 累计已用 ${lifetimeUsed} 次`
+                ? '次数未提供'
+                : `可用 ${available} · 已用 ${lifetimeUsed}`
               : hasAvailable
-                ? `可用 ${available} 次 · 累计已用 ${lifetimeUsed} 次`
-                : available === 0 ? `可用 0 次 · 累计已用 ${lifetimeUsed} 次` : '重置次数暂不可用'}
+                ? `可用 ${available} · 已用 ${lifetimeUsed}`
+                : available === 0 ? `可用 0 · 已用 ${lifetimeUsed}` : '次数未提供'}
           </div>
           {lastReset && (
-            <div className="reset-last">上次重置：{lastReset}</div>
+            <div className="reset-last">上次 {lastReset}</div>
           )}
         </div>
 
@@ -97,15 +97,15 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
                 disabled={loading || !hasAvailable}
                 aria-label={hasAvailable ? `重置额度窗口，剩余 ${available} 次` : '尝试重置额度窗口'}
               >
-                {loading ? '重置中…' : hasAvailable ? compact ? '重置' : '重置窗口' : '暂无额度'}
+                {loading ? '重置中…' : hasAvailable ? '重置' : '不可用'}
               </Button>
             )}
           />
           <AlertDialogContent className="confirm-dialog appica-confirm-dialog">
             <AlertDialogHeader>
-              <AlertDialogTitle className="confirm-title">确认手动重置？</AlertDialogTitle>
+              <AlertDialogTitle className="confirm-title">确认重置官方额度？</AlertDialogTitle>
               <AlertDialogDescription className="confirm-copy">
-                这会消耗一次官方额度重置次数，并重置当前符合条件的窗口。请仅在确实需要立即恢复额度时执行。
+                这会消耗一次官方额度重置次数，并重置当前符合条件的官方额度窗口；不会清零本地 Token 小计。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="confirm-actions">

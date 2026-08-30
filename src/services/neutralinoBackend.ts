@@ -392,6 +392,8 @@ async function fetchSnapshot(
   const codexLocal = local_providers.find((p) => p.provider === 'codex');
   const today_local = codexLocal?.today ?? { ...EMPTY_LOCAL_PERIOD };
   const current_local = codexLocal?.current ?? today_local;
+  const previous_local = codexLocal?.previous ?? { ...EMPTY_LOCAL_PERIOD };
+  const subtotal_local = codexLocal?.subtotal ?? { ...EMPTY_LOCAL_PERIOD };
   const month_local = codexLocal?.month ?? { ...EMPTY_LOCAL_PERIOD };
   const total_local = codexLocal?.total ?? month_local;
   const spend = computeSpend(month_local);
@@ -512,6 +514,8 @@ async function fetchSnapshot(
     rate_limits,
     today_local,
     current_local,
+    previous_local,
+    subtotal_local,
     month_local,
     total_local,
     local_providers,

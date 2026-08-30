@@ -1,4 +1,4 @@
-import type { BankedResets, WindowUsage } from '../types';
+import type { BankedResets, PeriodUsage, WindowUsage } from '../types';
 import { isWindowMissing, windowDurationLabel } from '../services/usageLogic';
 import ProviderQuotaDashboard, { type DashboardDensity } from './ProviderQuotaDashboard';
 import ResetPanel from './ResetPanel';
@@ -9,6 +9,8 @@ interface Props {
   source?: string;
   density?: DashboardDensity;
   bankedResets?: BankedResets;
+  currentLocal?: PeriodUsage;
+  previousLocal?: PeriodUsage;
 }
 
 export default function CodexUsageDashboard({
@@ -17,6 +19,8 @@ export default function CodexUsageDashboard({
   source,
   density = 'detail',
   bankedResets,
+  currentLocal,
+  previousLocal,
 }: Props) {
   const shortAvailable = !isWindowMissing(shortWindow);
   const weeklyAvailable = !isWindowMissing(weeklyWindow);
@@ -31,12 +35,14 @@ export default function CodexUsageDashboard({
       source={source?.includes('app-server') ? undefined : source}
       primary={main ?? undefined}
       secondary={secondary ?? undefined}
-      primaryLabel={main ? windowDurationLabel(main, '当前额度') : '周额度'}
-      secondaryLabel={secondary ? windowDurationLabel(secondary, '周额度') : '周额度'}
-      periodCopy={main === shortWindow ? '当前 5 小时已使用 ' : '本周已使用 '}
+      primaryLabel={main ? `官方额度 · ${windowDurationLabel(main, '当前窗口')}` : '官方额度'}
+      secondaryLabel={secondary ? `官方额度 · ${windowDurationLabel(secondary, '周额度')}` : '周官方额度'}
+      periodCopy="当前周期本地 Token "
       accentColor="#6f8cff"
       density={density}
-      emptyCopy="等待 app-server 返回当前额度窗口。"
+      localPrimary={currentLocal}
+      localPrevious={previousLocal}
+      emptyCopy="等待官方额度"
       footer={(
         <ResetPanel
           banked={bankedResets}

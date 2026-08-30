@@ -17,6 +17,7 @@ import {
   refreshUsage,
   saveSettings,
 } from '../services/neutralinoBackend';
+import { emptyLocalTokenSubtotal, readLocalTokenSubtotalCheckpoint, setLocalTokenSubtotalCheckpoint } from '../services/localTokenSubtotal';
 
 // ─── Module-level listener (registered once, cleaned up on unlisten call) ───
 
@@ -51,6 +52,7 @@ interface Store {
   fetchInitial: () => Promise<void>;
   refresh: () => Promise<void>;
   executeReset: (creditId?: string) => Promise<ResetOutcome>;
+  resetLocalSubtotal: () => Promise<boolean>;
   checkFirstLaunch: () => Promise<boolean>;
   getAuthStatus: () => Promise<AuthStatus>;
   loadSettings: () => Promise<Settings>;
@@ -119,6 +121,25 @@ export const useStore = create<Store>((set) => ({
     } catch {
       return 'failed';
     }
+  },
+
+  resetLocalSubtotal: async () => {
+    const checkpoint = setLocalTokenSubtotalCheckpoint();
+    if (checkpoint == null) return false;
+    set((state) => {
+      if (!state.data) return state;
+      const zero = emptyLocalTokenSubtotal();
+      return {
+        data: {
+          ...state.data,
+          subtotal_local: zero,
+          local_providers: state.data.local_providers.map((provider) => (
+            provider.provider === 'codex' ? { ...provider, subtotal: zero } : provider
+          )),
+        },
+      };
+    });
+    return true;
   },
 
   checkFirstLaunch: () => isPreviewMode() ? Promise.resolve(false) : checkFirstLaunch(),
@@ -232,7 +253,11 @@ function previewSnapshot(): UsageSnapshot {
     };
   };
   const localProviders: ProviderLocalUsage[] = [
-    previewProvider('codex', today, month),
+    {
+      ...previewProvider('codex', today, month),
+      previous: usagePeriod(12, 192_000, 'gpt-5.6-sol', 1.71),
+      subtotal: previewSubtotal(scalePeriod(month, 3), now),
+    },
     previewProvider(
       'claude',
       usagePeriod(11, 214_000, 'claude-sonnet-4.5', 0.92),
@@ -300,6 +325,8 @@ function previewSnapshot(): UsageSnapshot {
     }],
     today_local: today,
     current_local: today,
+    previous_local: usagePeriod(12, 192_000, 'gpt-5.6-sol', 1.71),
+    subtotal_local: previewSubtotal(scalePeriod(month, 3), now),
     month_local: month,
     total_local: scalePeriod(month, 3),
     local_providers: localProviders,
@@ -317,4 +344,13 @@ function previewSnapshot(): UsageSnapshot {
       pricing_as_of: new Date().toISOString().slice(0, 10),
     },
   };
+}
+
+function previewSubtotal(total: PeriodUsage, now: number): PeriodUsage {
+  const checkpoint = readLocalTokenSubtotalCheckpoint();
+  // Preview activity is deliberately one minute old, so a newly persisted
+  // checkpoint remains zero after a browser reload just like real event data.
+  return checkpoint != null && checkpoint >= now - 60
+    ? { messages: 0, tokens: 0, models: [] }
+    : total;
 }

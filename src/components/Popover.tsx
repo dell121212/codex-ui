@@ -20,7 +20,7 @@ const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; desc
   usage: {
     eyebrow: 'Analytics',
     title: '用量与成本',
-    description: '跨 Provider 对比',
+    description: '跨 Provider',
   },
   providers: {
     eyebrow: 'Connections',
@@ -30,7 +30,7 @@ const WORKSPACE_META: Record<WorkspaceId, { eyebrow: string; title: string; desc
   settings: {
     eyebrow: 'Preferences',
     title: '设置',
-    description: '管理同步频率、登录态与通知偏好。',
+    description: '同步、登录与通知',
   },
 };
 
@@ -48,6 +48,11 @@ export default function Popover() {
     () => data?.local_providers ?? [],
     [data?.local_providers],
   );
+  const providerCountLabel = localProviders.length > 0
+    ? `${localProviders.length} 个 Provider`
+    : data
+      ? '暂无 Provider'
+      : '等待同步';
   const workspaceMeta = WORKSPACE_META[workspace];
   return (
     <div className="app-shell">
@@ -72,7 +77,7 @@ export default function Popover() {
                   <h1>{workspaceMeta.title}</h1>
                   {workspace === 'overview' && (
                     <span className="workspace-provider-count">
-                      {localProviders.length || 6} 个 Provider
+                      {providerCountLabel}
                     </span>
                   )}
                 </div>
@@ -81,12 +86,12 @@ export default function Popover() {
               {workspace === 'overview' && (
                 <WorkspaceCompanion
                   data={data}
-                  providerCount={localProviders.length || 6}
+                  providerCount={localProviders.length}
                 />
               )}
               {workspace !== 'overview' && workspace !== 'settings' && (
                 <span className="workspace-provider-count">
-                  {localProviders.length || 6} 个 Provider
+                  {providerCountLabel}
                 </span>
               )}
             </header>
@@ -105,7 +110,7 @@ export default function Popover() {
               </div>
             )}
 
-            <Suspense fallback={<div className="workspace-loading" role="status">正在加载工作区…</div>}>
+            <Suspense fallback={<div className="workspace-loading" role="status">加载…</div>}>
               {workspace === 'usage' && (
                 <UsageAnalysisWorkspace
                   data={data}

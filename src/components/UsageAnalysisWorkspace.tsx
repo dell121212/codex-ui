@@ -1,6 +1,7 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import type { ProviderLocalUsage, UsagePeriodKey, UsageSnapshot } from '../types';
 import { buildUsagePortfolio, summarizePeriodCost } from '../services/usageAggregation';
+import { formatTokenExact, formatTokenM } from '../services/tokenDisplay';
 import ModelList from './ModelList';
 import QuotaList from './QuotaList';
 import UsagePeriodCards from './UsagePeriodCards';
@@ -20,6 +21,7 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
   const selectedProviders = [...portfolio.providers].sort((a, b) => b[period].tokens - a[period].tokens);
   const totalTokens = selectedUsage.tokens;
   const selectedLabel = period === 'current' ? '当前周期' : period === 'month' ? '当月' : '总计';
+  const selectedShortLabel = period === 'current' ? '本期' : period === 'month' ? '本月' : '总计';
   const codexModels = data?.total_local?.models ?? data?.month_local.models ?? [];
 
   return (
@@ -30,23 +32,23 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
         options={[
           {
             id: 'current',
-            label: '当前周期',
-            value: fmtCompact(portfolio.current.tokens),
-            detail: `${portfolio.current.messages} 次消息`,
+            label: '本期',
+            tokens: portfolio.current.tokens,
+            detail: `${portfolio.current.messages} 消息`,
             usage: portfolio.current,
           },
           {
             id: 'month',
-            label: '当月 Token',
-            value: fmtCompact(portfolio.month.tokens),
-            detail: `${portfolio.month.models.length} 个模型`,
+            label: '本月',
+            tokens: portfolio.month.tokens,
+            detail: `${portfolio.month.models.length} 模型`,
             usage: portfolio.month,
           },
           {
             id: 'total',
-            label: '总 Token',
-            value: fmtCompact(portfolio.total.tokens),
-            detail: '本地已记录',
+            label: '总计',
+            tokens: portfolio.total.tokens,
+            detail: '本地记录',
             usage: portfolio.total,
           },
         ]}
@@ -55,10 +57,15 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
       <section className="card provider-analysis-card" aria-label="Provider 用量贡献">
         <div className="provider-analysis-heading">
           <div>
-            <strong>Provider 贡献</strong>
-            <span>按{selectedLabel} Token 排序</span>
+            <strong>贡献</strong>
+            <span title={`按${selectedLabel} Token 排序`}>按{selectedShortLabel}用量</span>
           </div>
-          <span>{selectedLabel} · {fmtCompact(totalTokens)} Token</span>
+          <span
+            title={formatTokenExact(totalTokens)}
+            aria-label={`${selectedLabel} · ${formatTokenExact(totalTokens)}`}
+          >
+            {formatTokenM(totalTokens)} Token
+          </span>
         </div>
 
         <div className="provider-analysis-list">
@@ -80,15 +87,15 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
                   {provider.badge}
                 </span>
                 <span>
-                  <strong>{provider.fullName}</strong>
-                  <small>{usage.tokens > 0 ? `${usage.messages} 次消息` : '暂无本地用量'}</small>
+                  <strong title={provider.fullName}>{provider.fullName}</strong>
+                  <small>{usage.tokens > 0 ? `${usage.messages} 消息` : '无本地用量'}</small>
                 </span>
               </div>
-              <AnalysisMetric label={selectedLabel} value={fmtCompact(usage.tokens)} />
+              <AnalysisMetric label={selectedLabel} value={formatTokenM(usage.tokens)} tokenValue={usage.tokens} />
               <AnalysisMetric label="估价" value={`~$${estimate.usd.toFixed(2)}`} />
               <div className="provider-analysis-share">
                 <div>
-                  <span>贡献</span>
+                  <span>占比</span>
                   <strong>{share.toFixed(share >= 10 ? 0 : 1)}%</strong>
                 </div>
                 <div className="provider-analysis-track">
@@ -110,26 +117,21 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
         <ModelList
           models={selectedUsage.models}
           monthModels={selectedUsage.models}
-          title={`${selectedLabel}跨公司模型用量`}
+          title={`${selectedShortLabel}模型`}
         />
       </div>
 
-      <QuotaList buckets={data?.rate_limits} usedModels={codexModels} title="OpenAI 独立模型额度" />
+      <QuotaList buckets={data?.rate_limits} usedModels={codexModels} title="模型额度" />
     </div>
   );
 }
 
-function AnalysisMetric({ label, value }: { label: string; value: string }) {
+function AnalysisMetric({ label, value, tokenValue }: { label: string; value: string; tokenValue?: number }) {
+  const exactValue = tokenValue === undefined ? undefined : formatTokenExact(tokenValue);
   return (
     <div className="provider-analysis-metric">
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong title={exactValue === '—' ? undefined : exactValue} aria-label={exactValue}>{value}</strong>
     </div>
   );
-}
-
-function fmtCompact(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
 }

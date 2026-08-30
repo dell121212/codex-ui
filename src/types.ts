@@ -109,11 +109,25 @@ export interface ProviderLocalUsage {
   today: PeriodUsage;
   /** Local token usage attributed to the Provider's active quota window. */
   current: PeriodUsage;
+  /** Local token usage in the quota window immediately preceding `current`. */
+  previous?: PeriodUsage;
+  /** Local token usage after the user-owned local subtotal checkpoint. */
+  subtotal?: PeriodUsage;
   month: PeriodUsage;
   /** All locally recorded usage available to this app. */
   total: PeriodUsage;
+  /** Stable start boundary for the active local quota period. */
+  current_period_start?: number;
   /** Stable identity for deciding whether a current-period counter may regress. */
   current_period_end?: number;
+  /** Stable identity derived from the active local quota window boundaries. */
+  current_period_key?: string;
+  /** Start boundary for the local quota period immediately preceding `current`. */
+  previous_period_start?: number;
+  /** End boundary for the local quota period immediately preceding `current`. */
+  previous_period_end?: number;
+  /** Stable identity for the previous local quota period. */
+  previous_period_key?: string;
   /** Official remote quota when the company exposes an API (Grok billing). */
   remote?: ProviderRemoteQuota;
 }
@@ -127,6 +141,8 @@ export interface UsageSnapshot {
   /** Codex local usage (backward compatible). */
   today_local: PeriodUsage;
   current_local: PeriodUsage;
+  previous_local?: PeriodUsage;
+  subtotal_local?: PeriodUsage;
   month_local: PeriodUsage;
   total_local: PeriodUsage;
   /** Multi-company local capture. */

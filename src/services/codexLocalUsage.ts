@@ -1,4 +1,5 @@
 import type { PeriodUsage, ProviderLocalUsage, WindowUsage } from '../types';
+import { readLocalTokenSubtotalCheckpoint } from './localTokenSubtotal';
 import type { FileApi } from './localFileAccess';
 import { pathExists, walkFiles } from './localFileAccess';
 import {
@@ -13,6 +14,9 @@ import {
 
 const EMPTY_PERIOD: PeriodUsage = { messages: 0, tokens: 0, models: [] };
 const rolloutCache = new Map<string, { signature: string; parsed: ParsedRolloutFile }>();
+const DEFAULT_SHORT_WINDOW_MINS = 5 * 60;
+const SHORT_WINDOW_MAX_MINS = 12 * 60;
+const WEEKLY_WINDOW_MINS = 7 * 24 * 60;
 
 export async function captureCodexLocal(
   api: FileApi,
@@ -71,21 +75,37 @@ export async function captureCodexLocal(
   }
 
   const nowUnix = Math.floor(now.getTime() / 1000);
-  const activeWindow = [latestRateLimits?.primary, latestRateLimits?.secondary]
-    .filter((window): window is WindowUsage => Boolean(window?.window_duration_mins))
-    .sort((a, b) => a.window_duration_mins - b.window_duration_mins)[0];
-  const currentStart = activeWindow?.reset_at_unix && activeWindow.window_duration_mins
-    ? activeWindow.reset_at_unix - activeWindow.window_duration_mins * 60
-    : nowUnix - 5 * 60 * 60;
+  const activeWindow = rollActiveWindow(selectActiveWindow(latestRateLimits), nowUnix);
+  const windowMinutes = activeWindow?.window_duration_mins || DEFAULT_SHORT_WINDOW_MINS;
+  const hasPeriodBoundary = Boolean(activeWindow?.reset_at_unix && windowMinutes > 0);
+  const currentStart = hasPeriodBoundary
+    ? activeWindow!.reset_at_unix - windowMinutes * 60
+    : nowUnix - windowMinutes * 60;
   const monthStartUnix = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
   const todayStartUnix = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000);
 
   const today = usageFromEvents(events.filter((event) => event.timestamp_unix >= todayStartUnix));
+  const previousStart = currentStart - windowMinutes * 60;
+  // Keep adjacent quota windows disjoint: previous=[previousStart,currentStart),
+  // current=[currentStart,now]. Do not derive either value from cumulative totals.
+  const previous = usageFromEvents(events.filter((event) => (
+    event.timestamp_unix >= previousStart && event.timestamp_unix < currentStart
+  )));
   const current = usageFromEvents(events.filter((event) => (
     event.timestamp_unix >= currentStart && event.timestamp_unix <= nowUnix
   )));
+  const subtotalCheckpoint = readLocalTokenSubtotalCheckpoint();
+  const subtotal = usageFromEvents(events.filter((event) => (
+    subtotalCheckpoint == null || event.timestamp_unix > subtotalCheckpoint
+  )));
   const month = usageFromEvents(events.filter((event) => event.timestamp_unix >= monthStartUnix));
   const total = usageFromEvents(events);
+  const currentPeriod = hasPeriodBoundary
+    ? periodBoundary(currentStart, activeWindow!.reset_at_unix, windowMinutes)
+    : undefined;
+  const previousPeriod = currentPeriod
+    ? periodBoundary(currentStart - windowMinutes * 60, currentStart, windowMinutes)
+    : undefined;
 
   return {
     provider: 'codex',
@@ -95,9 +115,100 @@ export async function captureCodexLocal(
     authPath: `${home}/.codex/auth.json`,
     today,
     current,
+    previous,
+    subtotal,
     month,
     total,
+    current_period_start: currentPeriod?.start_unix,
     current_period_end: activeWindow?.reset_at_unix || undefined,
+    current_period_key: currentPeriod?.key,
+    previous_period_start: previousPeriod?.start_unix,
+    previous_period_end: previousPeriod?.end_unix,
+    previous_period_key: previousPeriod?.key,
+  };
+}
+
+/**
+ * Select the local period window independently from the displayed remote
+ * quota. A rollout can carry a weekly window with duration metadata while the
+ * 5h window only carries its reset; the latter must still define current and
+ * previous local periods. A lone explicit weekly window remains weekly.
+ */
+function selectActiveWindow(
+  latestRateLimits: ParsedRolloutFile['latestRateLimits'],
+): WindowUsage | undefined {
+  if (!latestRateLimits) return undefined;
+
+  const windows = [latestRateLimits.primary, latestRateLimits.secondary]
+    .filter((window) => hasWindowSignal(window));
+  if (!windows.length) return undefined;
+
+  const explicitShort = windows
+    .filter((window) => window.window_duration_mins > 0 && window.window_duration_mins < WEEKLY_WINDOW_MINS)
+    .sort((a, b) => a.window_duration_mins - b.window_duration_mins)[0];
+  if (explicitShort) return explicitShort;
+
+  const explicitWeekly = windows.find((window) => window.window_duration_mins >= WEEKLY_WINDOW_MINS);
+  const inferredShort = windows.find((window) => (
+    window !== explicitWeekly && window.window_duration_mins < WEEKLY_WINDOW_MINS
+  ));
+  if (inferredShort) {
+    return inferredShort.window_duration_mins > 0
+      ? inferredShort
+      : { ...inferredShort, window_duration_mins: DEFAULT_SHORT_WINDOW_MINS };
+  }
+
+  // Preserve a weekly-only rollout as weekly. If duration metadata is absent
+  // entirely, the legacy fallback remains the 5h window below this helper.
+  return explicitWeekly ?? (windows.length > 1 ? {
+    ...windows[0],
+    window_duration_mins: windows[0].window_duration_mins || DEFAULT_SHORT_WINDOW_MINS,
+  } : windows[0]);
+}
+
+function hasWindowSignal(window: WindowUsage): boolean {
+  return window.limit > 0
+    || window.used > 0
+    || window.percent > 0
+    || window.window_duration_mins > 0
+    || window.reset_at_unix > 0;
+}
+
+function rollActiveWindow(window: WindowUsage | undefined, nowUnix: number): WindowUsage | undefined {
+  if (!window || window.window_duration_mins <= 0 || (
+    window.window_duration_mins > SHORT_WINDOW_MAX_MINS
+    && window.window_duration_mins !== WEEKLY_WINDOW_MINS
+  )) {
+    return window;
+  }
+  if (window.reset_at_unix <= 0 || window.reset_at_unix > nowUnix) return window;
+
+  const windowSeconds = window.window_duration_mins * 60;
+  const resetAt = window.reset_at_unix
+    + (Math.floor((nowUnix - window.reset_at_unix) / windowSeconds) + 1) * windowSeconds;
+  return {
+    ...window,
+    used: 0,
+    percent: 0,
+    reset_at_unix: resetAt,
+    remaining_secs: resetAt - nowUnix,
+  };
+}
+
+function periodBoundary(startUnix: number, endUnix: number, windowMinutes: number): {
+  start_unix: number;
+  end_unix: number;
+  key: string;
+} {
+  const mode = windowMinutes === DEFAULT_SHORT_WINDOW_MINS
+    ? '5h'
+    : windowMinutes === WEEKLY_WINDOW_MINS
+      ? '7d'
+      : `${windowMinutes}m`;
+  return {
+    start_unix: startUnix,
+    end_unix: endUnix,
+    key: `${mode}:${startUnix}:${endUnix}`,
   };
 }
 

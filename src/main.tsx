@@ -13,7 +13,7 @@ initNeutralinoBackend();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ThemeProvider forcedTheme="light" enableSystem={false} enableColorScheme>
+    <ThemeProvider forcedTheme="dark" enableSystem={false} enableColorScheme>
       <ReducedMotionProvider>
         <TooltipProvider delay={250}>
           <App />

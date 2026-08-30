@@ -59,4 +59,25 @@ describe('local usage continuity', () => {
     expect(merged.month.tokens).toBe(0);
     expect(merged.total.tokens).toBe(120);
   });
+
+  it('uses the period key instead of a shared end timestamp when windows differ', () => {
+    const previous = {
+      ...provider(120),
+      current_period_key: '7d:1799395200:1800000000',
+    };
+    const fresh = {
+      ...provider(0),
+      current_period_key: '5h:1799982000:1800000000',
+    };
+
+    const [merged] = mergeStableLocalProviders(
+      [fresh],
+      [previous],
+      '2026-08-16T08:00:00.000Z',
+      '2026-08-16T07:59:00.000Z',
+    ) as UsageWithPeriods[];
+
+    expect(merged.current.tokens).toBe(0);
+    expect(merged.total.tokens).toBe(120);
+  });
 });

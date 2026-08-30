@@ -52,6 +52,12 @@ try {
 
   await send('Runtime.enable');
   await waitForExpression(send, 'document.readyState === "complete" && document.querySelectorAll(".provider-palette-item").length >= 6');
+  await evaluate(send, `(() => {
+    localStorage.removeItem('codex-ui-dashboard-providers-v1');
+    localStorage.removeItem('codex_local_token_subtotal_v1');
+  })()`);
+  await send('Page.reload');
+  await waitForExpression(send, 'document.readyState === "complete" && document.querySelectorAll(".provider-palette-item").length >= 6');
 
   const companionBefore = await evaluate(send, `(() => {
     const character = document.querySelector('.workspace-companion-character');
@@ -84,6 +90,40 @@ try {
       toolbarRect: toolbarRect ? { left: toolbarRect.left, width: toolbarRect.width } : null,
       usagePeriods: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')]
         .map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
+      currentHero: document.querySelector('.usage-hero-title')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      currentHeroTitle: document.querySelector('.usage-hero-title strong')?.getAttribute('title') ?? '',
+      currentHeroAria: document.querySelector('.usage-hero-title strong')?.getAttribute('aria-label') ?? '',
+      previousHero: document.querySelector('.usage-hero-previous')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      previousHeroAria: document.querySelector('.usage-hero-previous')?.getAttribute('aria-label') ?? '',
+      periodValues: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card strong')]
+        .map((node) => ({
+          text: node.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          title: node.getAttribute('title') ?? '',
+          aria: node.getAttribute('aria-label') ?? '',
+        })),
+      tokenStyles: [...document.querySelectorAll('.usage-hero-local-value, .usage-period-card strong, .token-subtotal-panel strong, .model-stats > span')]
+        .map((node) => {
+          const style = getComputedStyle(node);
+          return { fontFamily: style.fontFamily, fontVariantNumeric: style.fontVariantNumeric };
+        }),
+      officialRing: document.querySelector('.usage-ring')?.getAttribute('aria-label') ?? '',
+      timeProgress: document.querySelector('.usage-hero-progress')?.getAttribute('aria-label') ?? '',
+      officialField: [...document.querySelectorAll('.usage-stat')]
+        .find((node) => node.textContent.includes('官方额度'))?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      officialSecondaryMeta: document.querySelector('.usage-secondary-meta')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      quotaSurfaces: [
+        '.usage-hero',
+        '.usage-period-card',
+        '.token-subtotal-panel',
+        '.usage-stat',
+        '.usage-secondary',
+        '.reset-panel--embedded',
+      ].map((selector) => ({
+        selector,
+        background: getComputedStyle(document.querySelector(selector)).backgroundColor,
+      })),
+      periodTopRows: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')]
+        .map((node) => Math.round(node.getBoundingClientRect().top)),
       refreshCenterDelta: refreshRect && toolbarRect
         ? Number(((refreshRect.left + refreshRect.width / 2) - (toolbarRect.left + toolbarRect.width / 2)).toFixed(2))
         : null,
@@ -125,13 +165,41 @@ try {
     || !companionBefore.refreshCentered
     || !companionBefore.healthInsideRefresh
     || companionBefore.sourceText.includes('Codex app-server')
-    || companionBefore.primaryQuotaLabel !== '5 小时'
-    || companionBefore.secondaryQuotaLabel !== '周额度'
+    || companionBefore.primaryQuotaLabel !== '本地'
+    || companionBefore.secondaryQuotaLabel !== '官方额度 · 周额度'
     || companionBefore.usagePeriods.length !== 3
-    || !companionBefore.usagePeriods.some((item) => item.includes('当前周期'))
-    || !companionBefore.usagePeriods.some((item) => item.includes('总 Token'))
+    || !companionBefore.usagePeriods.some((item) => item.includes('本期'))
+    || !companionBefore.usagePeriods.some((item) => item.includes('上期'))
+    || !companionBefore.usagePeriods.some((item) => item.includes('总计'))
+    || companionBefore.currentHero.includes('18%')
+    || !companionBefore.currentHero.includes('0.384M')
+    || !companionBefore.currentHeroTitle.includes('384,200')
+    || companionBefore.currentHeroAria !== '384,200 Token'
+    || !companionBefore.previousHero.includes('上期 0.192M Token')
+    || companionBefore.previousHeroAria !== '上一周期 192,000 Token'
+    || companionBefore.periodValues.length !== 3
+    || companionBefore.periodValues[0]?.text !== '0.384M'
+    || companionBefore.periodValues[0]?.title !== '384,200 Token'
+    || companionBefore.periodValues[0]?.aria !== '384,200 Token'
+    || companionBefore.periodValues[1]?.text !== '2.84M'
+    || companionBefore.periodValues[1]?.title !== '2,840,000 Token'
+    || companionBefore.periodValues[2]?.text !== '8.52M'
+    || companionBefore.periodValues[2]?.title !== '8,520,000 Token'
+    || companionBefore.tokenStyles.length < 4
+    || companionBefore.tokenStyles.some(({ fontFamily, fontVariantNumeric }) => /Georgia|Times|(?:^|,\s*)serif(?:,|$)/i.test(fontFamily) || !/lining-nums/.test(fontVariantNumeric) || !/tabular-nums/.test(fontVariantNumeric))
+    || !companionBefore.officialRing.includes('官方额度 · 5 小时')
+    || companionBefore.timeProgress !== '周期时间进度'
+    || !companionBefore.officialField.includes('官方额度 · 5 小时')
+    || !companionBefore.officialSecondaryMeta.includes('上限 100')
+    || companionBefore.officialSecondaryMeta.includes('<0.001M Token')
+    || companionBefore.officialSecondaryMeta.includes('0.000M Token')
+    || companionBefore.quotaSurfaces.some(({ background }) => {
+      const channels = background.match(/\d+/g)?.map(Number) ?? [];
+      return channels.length < 3 || Math.min(...channels) > 210;
+    })
+    || new Set(companionBefore.periodTopRows).size !== 1
     || !companionAfter.actionImage.includes('/expressions/')
-    || !companionAfter.message.includes('点击互动')
+    || !companionAfter.message.includes('互动')
     || persistedCompanion !== 'klee'
   ) {
     throw new Error(`Companion/header regression failed: ${JSON.stringify({
@@ -140,6 +208,80 @@ try {
       persistedCompanion,
     })}`);
   }
+
+  const desktopOverflows = await collectVisibleOverflow(send);
+  if (desktopOverflows.length) {
+    throw new Error(`Desktop visible-text overflow: ${JSON.stringify(desktopOverflows)}`);
+  }
+
+  await evaluate(send, `document.querySelector('.token-subtotal-reset')?.click()`);
+  await waitForExpression(send, `document.querySelector('.token-subtotal-panel strong')?.textContent?.includes('0.000M Token')`);
+  await waitForExpression(send, `document.querySelector('.token-subtotal-feedback')?.textContent?.includes('本地小计已归零')`);
+  await send('Page.reload');
+  await waitForExpression(send, `document.readyState === 'complete' && document.querySelector('.token-subtotal-panel strong')?.textContent?.includes('0.000M Token')`);
+  const subtotalAfterReload = await evaluate(send, `({
+    value: document.querySelector('.token-subtotal-panel strong')?.textContent ?? '',
+    month: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')].find((node) => node.textContent.includes('本月'))?.textContent ?? '',
+    total: [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')].find((node) => node.textContent.includes('总计'))?.textContent ?? '',
+    officialReset: document.querySelector('.reset-panel--embedded .reset-btn')?.textContent ?? '',
+  })`);
+  if (
+    !subtotalAfterReload.value.includes('0.000M Token')
+    || !subtotalAfterReload.month.includes('2.84M')
+    || !subtotalAfterReload.total.includes('8.52M')
+    || !subtotalAfterReload.officialReset.includes('重置')
+  ) {
+    throw new Error(`Local subtotal regression failed: ${JSON.stringify(subtotalAfterReload)}`);
+  }
+
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 620,
+    height: 720,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const narrowPeriods = await evaluate(send, `(() => {
+    const cards = [...document.querySelectorAll('.provider-dashboard-extras .usage-period-card')];
+    const scroller = document.querySelector('.usage-period-scroll');
+    return {
+      count: cards.length,
+      tops: cards.map((node) => Math.round(node.getBoundingClientRect().top)),
+      scrollWidth: scroller?.scrollWidth ?? 0,
+      clientWidth: scroller?.clientWidth ?? 0,
+      atStart: scroller?.dataset.atStart,
+      atEnd: scroller?.dataset.atEnd,
+    };
+  })()`);
+  if (
+    narrowPeriods.count !== 3
+    || new Set(narrowPeriods.tops).size !== 1
+    || narrowPeriods.scrollWidth <= narrowPeriods.clientWidth
+    || narrowPeriods.atStart !== 'true'
+    || narrowPeriods.atEnd !== 'false'
+  ) {
+    throw new Error(`Narrow period row regression failed: ${JSON.stringify(narrowPeriods)}`);
+  }
+  await evaluate(send, `(() => {
+    const scroller = document.querySelector('.usage-period-scroll');
+    if (!scroller) return false;
+    scroller.scrollLeft = scroller.scrollWidth;
+    scroller.dispatchEvent(new Event('scroll'));
+    return true;
+  })()`);
+  await waitForExpression(send, `document.querySelector('.usage-period-scroll')?.dataset.atEnd === 'true'`);
+  const scrolledEdges = await evaluate(send, `({
+    atStart: document.querySelector('.usage-period-scroll')?.dataset.atStart,
+    atEnd: document.querySelector('.usage-period-scroll')?.dataset.atEnd,
+  })`);
+  if (scrolledEdges.atStart !== 'false' || scrolledEdges.atEnd !== 'true') {
+    throw new Error(`Narrow fade edge regression failed: ${JSON.stringify(scrolledEdges)}`);
+  }
+  const narrowOverflows = await collectVisibleOverflow(send);
+  if (narrowOverflows.length) {
+    throw new Error(`Narrow visible-text overflow: ${JSON.stringify(narrowOverflows)}`);
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
 
   const geometry = await evaluate(send, `(() => {
     const source = [...document.querySelectorAll('.provider-palette-item')]
@@ -199,6 +341,12 @@ try {
       resetText: document.querySelector('.reset-panel--embedded')?.textContent ?? '',
       hasCustomQuit: Boolean(document.querySelector('.app-toolbar-button--quit')),
       persisted: localStorage.getItem('codex-ui-dashboard-providers-v1'),
+      providerDetails: [...document.querySelectorAll('.usage-hero')].map((hero) => ({
+        kicker: hero.querySelector('.usage-hero-kicker')?.textContent?.trim() ?? '',
+        main: hero.querySelector('.usage-hero-title')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+        ring: hero.querySelector('.usage-ring')?.getAttribute('aria-label') ?? '',
+        previous: hero.querySelector('.usage-hero-previous')?.textContent?.trim() ?? '',
+      })),
     };
   })()`);
   const sameSize = (items) => items.every((item) => (
@@ -212,6 +360,12 @@ try {
     || !result.resetText.includes('重置')
     || result.hasCustomQuit
     || !String(result.persisted).includes('grok')
+    || result.providerDetails.length !== 2
+    || result.providerDetails[0]?.kicker !== '本地'
+    || !result.providerDetails[0]?.ring.includes('官方额度')
+    || result.providerDetails[1]?.kicker !== '本地'
+    || /%/.test(result.providerDetails[1]?.main ?? '')
+    || result.providerDetails[1]?.previous.includes('上期 0.000M Token')
   ) {
     throw new Error(`Drag regression failed: ${JSON.stringify(result)}`);
   }
@@ -233,16 +387,16 @@ try {
   if (
     analysis.providers !== 6
     || !analysis.header.includes('用量与成本')
-    || !analysis.header.includes('跨 Provider 对比')
+    || !analysis.header.includes('跨 Provider')
     || !analysis.header.includes('6 个 Provider')
     || !analysis.header.includes('Analytics')
     || analysis.header.includes('比较不同 Provider 的使用贡献与本月成本')
     || analysis.summary.length !== 3
-    || !analysis.summary.some((item) => item.includes('当前周期'))
-    || !analysis.summary.some((item) => item.includes('当月 Token'))
-    || !analysis.summary.some((item) => item.includes('总 Token'))
+    || !analysis.summary.some((item) => item.includes('本期'))
+    || !analysis.summary.some((item) => item.includes('本月'))
+    || !analysis.summary.some((item) => item.includes('总计'))
     || !analysis.summary.every((item) => item.includes('估价'))
-    || !analysis.modelTitle.includes('当前周期跨公司模型用量')
+    || !analysis.modelTitle.includes('本期模型')
   ) {
     throw new Error(`Usage analysis regression failed: ${JSON.stringify(analysis)}`);
   }
@@ -256,7 +410,7 @@ try {
   })`);
   if (
     totalPeriod.selected !== 'true'
-    || !totalPeriod.modelTitle.includes('总计跨公司模型用量')
+    || !totalPeriod.modelTitle.includes('总计模型')
     || !totalPeriod.heading.includes('总计')
   ) {
     throw new Error(`Usage period switch regression failed: ${JSON.stringify(totalPeriod)}`);
@@ -272,6 +426,17 @@ try {
   const connections = await evaluate(send, `({
     header: document.querySelector('.workspace-header')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
     rows: document.querySelectorAll('.provider-table-row').length,
+    tokenRows: [...document.querySelectorAll('.provider-table-row .provider-table-usage strong')]
+      .map((node) => {
+        const style = getComputedStyle(node);
+        return {
+          text: node.textContent?.trim() ?? '',
+          title: node.getAttribute('title') ?? '',
+          aria: node.getAttribute('aria-label') ?? '',
+          fontFamily: style.fontFamily,
+          fontVariantNumeric: style.fontVariantNumeric,
+        };
+      }),
   })`);
   if (
     connections.rows < 6
@@ -280,6 +445,11 @@ try {
     || !connections.header.includes('6 个 Provider')
     || !connections.header.includes('Connections')
     || connections.header.includes('查看本地客户端连接、授权状态与数据来源')
+    || connections.tokenRows.length < 6
+    || connections.tokenRows.some((row) => /k\b/i.test(row.text))
+    || !connections.tokenRows.some((row) => row.text === '2.84M' && row.title === '2,840,000 Token' && row.aria === '2,840,000 Token')
+    || !connections.tokenRows.some((row) => row.text === '0.000M' && row.title === '0 Token' && row.aria === '0 Token')
+    || connections.tokenRows.some(({ fontFamily, fontVariantNumeric }) => /Georgia|Times|(?:^|,\s*)serif(?:,|$)/i.test(fontFamily) || !/lining-nums/.test(fontVariantNumeric) || !/tabular-nums/.test(fontVariantNumeric))
   ) {
     throw new Error(`Providers header regression failed: ${JSON.stringify(connections)}`);
   }
@@ -298,6 +468,48 @@ try {
   socket?.close();
   chromium.kill('SIGTERM');
   vite.kill('SIGTERM');
+}
+
+async function collectVisibleOverflow(send) {
+  return evaluate(send, `(() => {
+    const maxDetails = 12;
+    const intentionalScroller = (node) => Boolean(node.closest('.usage-period-scroll, [data-overflow-allowed]'));
+    const visible = (node) => {
+      if (node.closest('[aria-hidden="true"], [hidden]') || intentionalScroller(node)) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0
+        && rect.width > 0 && rect.height > 0;
+    };
+    const selector = (node) => {
+      if (node.id) return '#' + node.id;
+      if (node.classList.length) return '.' + [...node.classList].slice(0, 2).join('.');
+      return node.tagName.toLowerCase();
+    };
+    return [...document.querySelectorAll('.app-shell *')]
+      .filter((node) => {
+        if (!(node instanceof HTMLElement) || !visible(node)) return false;
+        const text = (node.innerText || '').trim();
+        return text && (node.childElementCount === 0 || node.matches('button, [role="button"]'));
+      })
+      .flatMap((node) => {
+        const frame = node.closest('.app-toolbar, .workspace-content, .card, .provider-table, .setup-banner, .workspace-companion-message');
+        if (!frame || !visible(frame)) return [];
+        const rect = node.getBoundingClientRect();
+        const frameRect = frame.getBoundingClientRect();
+        const horizontalEscape = rect.left < frameRect.left - 1 || rect.right > frameRect.right + 1;
+        const scrollEscape = node.scrollWidth > node.clientWidth + 1;
+        if (!horizontalEscape && !scrollEscape) return [];
+        return [{
+          selector: selector(node),
+          text: (node.innerText || '').trim().slice(0, 80),
+          rect: { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) },
+          frame: { left: Math.round(frameRect.left), right: Math.round(frameRect.right), width: Math.round(frameRect.width) },
+          scroll: { width: node.scrollWidth, clientWidth: node.clientWidth },
+        }];
+      })
+      .slice(0, maxDetails);
+  })()`);
 }
 
 async function waitForTarget() {

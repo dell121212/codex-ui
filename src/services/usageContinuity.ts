@@ -18,9 +18,12 @@ export function mergeStableLocalProviders(
     const previousCurrent = before.current ?? before.month;
     const previousTotal = before.total ?? before.month;
 
-    const sameCurrentPeriod = provider.current_period_end != null
-      && provider.current_period_end === before.current_period_end;
-    const current = sameCurrentPeriod || (provider.current_period_end == null && sameDay)
+    const sameCurrentPeriod = provider.current_period_key != null && before.current_period_key != null
+      ? provider.current_period_key === before.current_period_key
+      : provider.current_period_end != null
+        && provider.current_period_end === before.current_period_end;
+    const current = sameCurrentPeriod
+      || (provider.current_period_key == null && provider.current_period_end == null && sameDay)
       ? nonRegressingPeriod(provider.current, previousCurrent)
       : provider.current;
     const today = sameDay

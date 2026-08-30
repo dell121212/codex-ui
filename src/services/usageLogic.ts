@@ -131,7 +131,15 @@ export function parseCodexUsage(raw: unknown): Pick<UsageSnapshot, 'window_5h' |
   const rate_limits = entries
     .map(([id, value]) => parseRateLimitBucket(value, id))
     .filter((bucket): bucket is RateLimitBucket => bucket !== null);
-  if (!rate_limits.length) return null;
+  if (!rate_limits.length) {
+    // The HTTP usage endpoint now returns the live WHAM-shaped window directly
+    // instead of the app-server's rateLimits map. Keep this fallback here so
+    // both official transports produce the same snapshot contract.
+    const liveRateLimit = data.rate_limit ?? data.rateLimit;
+    return liveRateLimit && typeof liveRateLimit === 'object'
+      ? parseWhamResponse(raw)
+      : null;
+  }
 
   const best = rate_limits.find((limit) => limit.id.toLowerCase() === 'codex') ?? rate_limits[0];
   const normalized = normalizeCodexWindows(best.primary, best.secondary);

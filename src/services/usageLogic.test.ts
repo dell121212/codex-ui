@@ -15,6 +15,7 @@ import {
   priceFor,
   rankModelsByTokens,
   rankRateLimitBuckets,
+  windowDurationLabel,
 } from './usageLogic';
 import type { RateLimitBucket } from '../types';
 import type { PeriodUsage, WindowUsage } from '../types';
@@ -367,6 +368,39 @@ describe('remote usage response parsing', () => {
     expect(live.window_weekly.window_duration_mins).toBe(10_080);
     expect(live.rate_limits[0].plan_type).toBe('plus');
     expect(live.banked_resets.available).toBe(0);
+  });
+
+  it('parses the live HTTP Codex rate_limit windows into named 5-hour and weekly quotas', () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 18_000;
+    const parsed = parseCodexUsage({
+      plan_type: 'pro',
+      rate_limit: {
+        primary_window: {
+          used_percent: 17,
+          limit_window_seconds: 18_000,
+          reset_at: resetAt,
+        },
+        secondary_window: {
+          used_percent: 41,
+          limit_window_seconds: 604_800,
+          reset_at: resetAt + 86_400,
+        },
+      },
+    });
+
+    expect(parsed?.window_5h).toMatchObject({
+      percent: 17,
+      window_duration_mins: 300,
+      reset_at_unix: resetAt,
+    });
+    expect(parsed?.window_weekly).toMatchObject({
+      percent: 41,
+      window_duration_mins: 10_080,
+      reset_at_unix: resetAt + 86_400,
+    });
+    expect(windowDurationLabel(parsed!.window_5h)).toBe('5 小时');
+    expect(windowDurationLabel(parsed!.window_weekly)).toBe('周额度');
+    expect(parsed?.rate_limits[0]).toMatchObject({ id: 'codex', name: null, plan_type: 'pro' });
   });
 });
 

@@ -45,7 +45,7 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
           style={{ width: `${window.percent}%`, background: usageHeatColor(window.percent) }}
         />
       </div>
-      {window.reset_at_unix > 0 && <div className="quota-reset">重置于 {resetText(window)}</div>}
+      {window.reset_at_unix > 0 && <div className="quota-reset">重置 {resetText(window)}</div>}
     </div>
   );
 }
@@ -53,7 +53,7 @@ function QuotaWindow({ window, fallback }: { window: WindowUsage; fallback: stri
 export default function QuotaList({
   buckets,
   usedModels,
-  title = '独立模型额度 · 已用优先',
+  title = '模型额度',
 }: Props) {
   const usedIds = (usedModels ?? [])
     .filter((m) => m.input_tokens + m.output_tokens > 0)

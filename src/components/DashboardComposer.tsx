@@ -23,11 +23,13 @@ import { GripVertical, Plus, X } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { AgentId, PeriodUsage, ProviderLocalUsage, UsagePeriodKey, UsageSnapshot, WindowUsage } from '../types';
 import { agentMeta, COMPANY_LIST } from '../services/agentCatalog';
+import { formatTokenExact } from '../services/tokenDisplay';
 import { computeSpend, isWindowMissing } from '../services/usageLogic';
 import CodexUsageDashboard from './CodexUsageDashboard';
 import ModelList from './ModelList';
 import ProviderQuotaDashboard, { type DashboardDensity } from './ProviderQuotaDashboard';
 import UsagePeriodCards from './UsagePeriodCards';
+import TokenSubtotalPanel from './TokenSubtotalPanel';
 
 const STORAGE_KEY = 'codex-ui-dashboard-providers-v1';
 const DROP_ZONE_ID = 'provider-dashboard-dropzone';
@@ -142,8 +144,8 @@ export default function DashboardComposer({ data, providers }: Props) {
         <section className="provider-palette" aria-label="可添加公司">
           <div className="provider-palette-heading">
             <div>
-              <strong>编排额度面板</strong>
-              <span>点击或拖入 Provider</span>
+              <strong>额度面板</strong>
+              <span>点击或拖入</span>
             </div>
             <Plus size={14} aria-hidden />
           </div>
@@ -223,7 +225,7 @@ function DashboardDropZone({ children, empty }: { children: React.ReactNode; emp
       className={`provider-dashboard-dropzone${isOver ? ' provider-dashboard-dropzone--over' : ''}`}
       aria-label="额度展示区"
     >
-      {empty ? <div className="provider-dashboard-empty">把公司拖到这里开始编排额度面板</div> : children}
+      {empty ? <div className="provider-dashboard-empty">拖入 Provider</div> : children}
     </section>
   );
 }
@@ -282,14 +284,6 @@ function ProviderDashboardContent({
   const periods = providerPeriods(id, data, local);
   const [period, setPeriod] = useState<UsagePeriodKey>('current');
   const selectedUsage = periods[period] ?? periods.month;
-  const currentQuota = id === 'codex'
-    ? (!isWindowMissing(data?.window_5h) ? data?.window_5h : data?.window_weekly)
-    : local?.remote && !local.remote.error && !isWindowMissing(local.remote.primary)
-      ? local.remote.primary
-      : undefined;
-  const currentValue = currentQuota?.limit
-    ? `${Math.round(currentQuota.percent)}%`
-    : formatTokenCompact(periods.current?.tokens ?? 0);
 
   return (
     <>
@@ -300,6 +294,8 @@ function ProviderDashboardContent({
           source={data?.provider}
           density={density}
           bankedResets={data?.banked_resets}
+          currentLocal={periods.current}
+          previousLocal={periods.previous}
         />
       ) : (
         <ProviderQuotaDashboard
@@ -313,6 +309,8 @@ function ProviderDashboardContent({
           accentColor={meta.color}
           density={density}
           emptyCopy={`尚未发现 ${meta.localHint} 的额度或本地活动。`}
+          localPrimary={periods.current}
+          localPrevious={periods.previous}
         />
       )}
 
@@ -325,31 +323,36 @@ function ProviderDashboardContent({
             options={[
               {
                 id: 'current',
-                label: '当前周期',
-                value: currentValue,
-                detail: currentQuota?.limit ? '官方额度消耗' : '本地 Token',
+                label: '本期',
+                tokens: periods.current?.tokens,
+                detail: '本地',
                 usage: periods.current ?? periods.month,
+                ...(periods.previous ? {
+                  previousTokens: periods.previous.tokens,
+                  previousAriaLabel: `上一周期 ${formatTokenExact(periods.previous.tokens)}`,
+                } : {}),
               },
               {
                 id: 'month',
-                label: '当月 Token',
-                value: formatTokenCompact(periods.month.tokens),
-                detail: `${periods.month.messages} 次消息`,
+                label: '本月',
+                tokens: periods.month.tokens,
+                detail: `${periods.month.messages} 消息`,
                 usage: periods.month,
               },
               {
                 id: 'total',
-                label: '总 Token',
-                value: formatTokenCompact(periods.total?.tokens ?? periods.month.tokens),
-                detail: '本地已记录',
+                label: '总计',
+                tokens: periods.total?.tokens ?? periods.month.tokens,
+                detail: '本地记录',
                 usage: periods.total ?? periods.month,
               },
             ]}
           />
+          {id === 'codex' && <TokenSubtotalPanel usage={periods.subtotal} />}
           <ModelList
             models={selectedUsage?.models}
             monthModels={selectedUsage?.models}
-            title={`${periodLabel(period)}活跃模型`}
+            title={`${periodLabel(period)}模型`}
           />
         </div>
       )}
@@ -380,12 +383,16 @@ function providerPeriods(
   source: string;
   today?: PeriodUsage;
   current?: PeriodUsage;
+  previous?: PeriodUsage;
+  subtotal?: PeriodUsage;
   month?: PeriodUsage;
   total?: PeriodUsage;
   spend?: ReturnType<typeof computeSpend>;
 } {
   const today = id === 'codex' ? data?.today_local : local?.today;
   const current = id === 'codex' ? data?.current_local : local?.current;
+  const previous = id === 'codex' ? data?.previous_local : local?.previous;
+  const subtotal = id === 'codex' ? data?.subtotal_local : local?.subtotal;
   const month = id === 'codex' ? data?.month_local : local?.month;
   const total = id === 'codex' ? data?.total_local : local?.total;
   const spend = id === 'codex' ? data?.spend : month ? computeSpend(month) : undefined;
@@ -401,6 +408,8 @@ function providerPeriods(
       source: remote.source,
       today,
       current,
+      previous,
+      subtotal,
       month,
       total,
       spend,
@@ -416,16 +425,12 @@ function providerPeriods(
     source: local?.available ? agentMeta(id).localHint : '等待连接',
     today,
     current: current ?? month,
+    previous,
+    subtotal,
     month,
     total: total ?? month,
     spend,
   };
-}
-
-function formatTokenCompact(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(Math.round(value));
 }
 
 function periodLabel(period: UsagePeriodKey): string {

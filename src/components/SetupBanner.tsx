@@ -18,28 +18,28 @@ const BANNERS: Record<string, BannerCfg> = {
     border: 'rgba(10,132,255,.25)',
     color: '#0a84ff',
     clickable: true,
-    msg: '未检测到 Codex 登录态。请在终端运行 codex login，程序会自动读取 token',
+    msg: '未登录：运行 codex login',
   },
   COOKIE_EXPIRED: {
     bg: 'rgba(255,159,10,.10)',
     border: 'rgba(255,159,10,.30)',
     color: '#ff9f0a',
     clickable: true,
-    msg: 'Codex access token 已被服务端拒绝。请重新运行 codex login，程序会自动读取新 token',
+    msg: '登录已失效：重新运行 codex login',
   },
   NETWORK_ERROR: {
     bg: 'rgba(255,69,58,.10)',
     border: 'rgba(255,69,58,.25)',
     color: '#ff453a',
     clickable: false,
-    msg: '✗ 额度接口暂时不可用（网络 / 防火墙），本地会话与 token 读取仍可用',
+    msg: '额度接口不可用（网络 / 防火墙）',
   },
   PARSE_ERROR: {
     bg: 'rgba(255,69,58,.10)',
     border: 'rgba(255,69,58,.25)',
     color: '#ff453a',
     clickable: false,
-    msg: '✗ API 响应格式已变化，请到 GitHub 反馈',
+    msg: 'API 响应格式已变化',
   },
 };
 
@@ -60,7 +60,12 @@ export default function SetupBanner({ errorKind, error, onOpenSettings }: Props)
       onClick={cfg.clickable ? onOpenSettings : undefined}
       role={cfg.clickable ? 'button' : undefined}
       tabIndex={cfg.clickable ? 0 : undefined}
-      onKeyDown={cfg.clickable ? (e) => e.key === 'Enter' && onOpenSettings() : undefined}
+      onKeyDown={cfg.clickable ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpenSettings();
+        }
+      } : undefined}
     >
       <div>{cfg.msg}</div>
       {error && <div className="setup-banner-detail">{error}</div>}

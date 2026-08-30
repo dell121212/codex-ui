@@ -10,7 +10,6 @@ import {
   PopoverTrigger,
 } from '@appica/ui-react/popover';
 import type { UsageSnapshot } from '../types';
-import { mostConstrainedCodexWindow } from '../services/usageLogic';
 
 const STORAGE_KEY = 'codex-ui-companion-v1';
 
@@ -61,9 +60,9 @@ type CompanionId = (typeof COMPANIONS)[number]['id'];
 type CompanionMotion = 'idle' | 'wave' | 'hop' | 'cheer';
 
 const INTERACTIONS: Array<{ motion: CompanionMotion; message: string }> = [
-  { motion: 'wave', message: '我在，随时陪你看看额度。' },
-  { motion: 'hop', message: '收到！今天也稳稳推进吧。' },
-  { motion: 'cheer', message: '做得不错，记得也让自己休息一下。' },
+  { motion: 'wave', message: '我在。' },
+  { motion: 'hop', message: '收到！' },
+  { motion: 'cheer', message: '做得不错。' },
 ];
 
 interface Props {
@@ -145,7 +144,7 @@ export default function WorkspaceCompanion({ data, providerCount }: Props) {
           arrow={false}
         >
           <PopoverTitle>陪伴角色</PopoverTitle>
-          <PopoverDescription>角色只在你主动点击时互动。</PopoverDescription>
+          <PopoverDescription>点击互动。</PopoverDescription>
           <div className="workspace-companion-picker" aria-label="选择陪伴角色">
             {COMPANIONS.map((item) => (
               <Button
@@ -198,7 +197,7 @@ export default function WorkspaceCompanion({ data, providerCount }: Props) {
         aria-live="polite"
       >
         <span>{interactionMessage ?? statusMessage}</span>
-        <small>点击互动</small>
+        <small aria-hidden="true">互动</small>
       </p>
     </aside>
   );
@@ -209,16 +208,8 @@ function isCompanionId(value: string): value is CompanionId {
 }
 
 function buildStatusMessage(data: UsageSnapshot | null, providerCount: number): string {
-  const constrained = data
-    ? mostConstrainedCodexWindow(data.window_5h, data.window_weekly)
-    : null;
-  if (constrained) {
-    const used = Math.round(constrained.window.percent);
-    if (used >= 85) return `${constrained.label}已用 ${used}%，建议留些余量。`;
-    if (used >= 60) return `${constrained.label}已用 ${used}%，节奏还不错。`;
-    return `${constrained.label}还剩 ${Math.max(0, 100 - used)}%。`;
-  }
+  if (!data) return '等待同步。';
   return providerCount > 0
-    ? `已连接 ${providerCount} 个 Provider。`
-    : '还没有检测到 Provider。';
+    ? `已连接 ${providerCount} 个 Provider`
+    : '未检测到 Provider。';
 }

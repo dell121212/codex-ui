@@ -1,4 +1,5 @@
 import type { ModelUsage } from '../types';
+import { formatTokenExact, formatTokenM } from '../services/tokenDisplay';
 import { modelTokenTotal, rankModelsByTokens } from '../services/usageLogic';
 
 interface Props {
@@ -14,12 +15,6 @@ function shortName(name: string): string {
     .replace(/-\d{4}-\d{2}-\d{2}$/, '')
     .replace(/-preview$/, '')
     .substring(0, 24);
-}
-
-function fmtTok(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `${(n / 1000).toFixed(0)}k`;
-  return String(n);
 }
 
 const BAR_COLORS = ['#0a84ff', '#5e5ce6', '#30d158', '#64d2ff', '#ff9f0a'];
@@ -46,7 +41,7 @@ export default function ModelList({ models, monthModels, title, preferMonth = fa
     return (
       <div className="card model-list">
         <div className="card-label">{label}</div>
-        <div className="empty-state">暂无会话数据</div>
+        <div className="empty-state">无数据</div>
       </div>
     );
   }
@@ -72,7 +67,12 @@ export default function ModelList({ models, monthModels, title, preferMonth = fa
                 {!isToday && <span className="model-tag">本月</span>}
               </span>
               <span className="model-stats">
-                {fmtTok(totalTok)}
+                <span
+                  title={formatTokenExact(totalTok)}
+                  aria-label={formatTokenExact(totalTok)}
+                >
+                  {formatTokenM(totalTok)}
+                </span>
                 {m.cost_usd != null ? ` · $${m.cost_usd.toFixed(2)}` : ''}
               </span>
             </div>
@@ -88,7 +88,7 @@ export default function ModelList({ models, monthModels, title, preferMonth = fa
             </div>
             {cachedTok > 0 && (
               <div className="model-stats" style={{ marginTop: 4, fontSize: 11, color: 'var(--t4)' }}>
-                缓存 {fmtTok(cachedTok)}
+                缓存 <span title={formatTokenExact(cachedTok)} aria-label={formatTokenExact(cachedTok)}>{formatTokenM(cachedTok)}</span>
               </div>
             )}
           </div>

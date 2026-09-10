@@ -76,7 +76,10 @@ export async function captureCodexLocal(
 
   const nowUnix = Math.floor(now.getTime() / 1000);
   const activeWindow = rollActiveWindow(selectActiveWindow(latestRateLimits), nowUnix);
-  const windowMinutes = activeWindow?.window_duration_mins || DEFAULT_SHORT_WINDOW_MINS;
+  // Local Codex counters track the current weekly period. The official quota
+  // payload still owns its separate 5h window; a lone/unknown short window
+  // must not move this local boundary back to that 5h reset.
+  const windowMinutes = activeWindow?.window_duration_mins || WEEKLY_WINDOW_MINS;
   const hasPeriodBoundary = Boolean(activeWindow?.reset_at_unix && windowMinutes > 0);
   const currentStart = hasPeriodBoundary
     ? activeWindow!.reset_at_unix - windowMinutes * 60
@@ -121,7 +124,9 @@ export async function captureCodexLocal(
     total,
     current_period_start: currentPeriod?.start_unix,
     current_period_end: activeWindow?.reset_at_unix || undefined,
-    current_period_key: currentPeriod?.key,
+    // A rolling fallback moves on every scan, so same-day cache continuity
+    // must allow events aging out of the seven-day range to lower the count.
+    current_period_key: currentPeriod?.key ?? `rolling7d:${currentStart}:${nowUnix}`,
     previous_period_start: previousPeriod?.start_unix,
     previous_period_end: previousPeriod?.end_unix,
     previous_period_key: previousPeriod?.key,
@@ -131,8 +136,9 @@ export async function captureCodexLocal(
 /**
  * Select the local period window independently from the displayed remote
  * quota. A rollout can carry a weekly window with duration metadata while the
- * 5h window only carries its reset; the latter must still define current and
- * previous local periods. A lone explicit weekly window remains weekly.
+ * 5h window only carries its reset; the weekly window owns local current and
+ * previous periods. When no weekly type can be established, the caller uses a
+ * rolling seven-day fallback without borrowing a short-window reset.
  */
 function selectActiveWindow(
   latestRateLimits: ParsedRolloutFile['latestRateLimits'],
@@ -143,27 +149,15 @@ function selectActiveWindow(
     .filter((window) => hasWindowSignal(window));
   if (!windows.length) return undefined;
 
-  const explicitShort = windows
-    .filter((window) => window.window_duration_mins > 0 && window.window_duration_mins < WEEKLY_WINDOW_MINS)
-    .sort((a, b) => a.window_duration_mins - b.window_duration_mins)[0];
-  if (explicitShort) return explicitShort;
+  // Duration, rather than primary/secondary position, is the authoritative
+  // type signal. Keep the exact seven-day value ahead of any short window so
+  // either lane can carry weekly metadata.
+  const explicitWeekly = windows.find((window) => window.window_duration_mins === WEEKLY_WINDOW_MINS);
+  if (explicitWeekly) return explicitWeekly;
 
-  const explicitWeekly = windows.find((window) => window.window_duration_mins >= WEEKLY_WINDOW_MINS);
-  const inferredShort = windows.find((window) => (
-    window !== explicitWeekly && window.window_duration_mins < WEEKLY_WINDOW_MINS
-  ));
-  if (inferredShort) {
-    return inferredShort.window_duration_mins > 0
-      ? inferredShort
-      : { ...inferredShort, window_duration_mins: DEFAULT_SHORT_WINDOW_MINS };
-  }
-
-  // Preserve a weekly-only rollout as weekly. If duration metadata is absent
-  // entirely, the legacy fallback remains the 5h window below this helper.
-  return explicitWeekly ?? (windows.length > 1 ? {
-    ...windows[0],
-    window_duration_mins: windows[0].window_duration_mins || DEFAULT_SHORT_WINDOW_MINS,
-  } : windows[0]);
+  // Explicit short-only (or ambiguous) quota data intentionally falls
+  // through to the rolling seven-day local fallback in captureCodexLocal.
+  return undefined;
 }
 
 function hasWindowSignal(window: WindowUsage): boolean {

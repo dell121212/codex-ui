@@ -13,7 +13,6 @@ import {
 } from './usageLogic';
 
 const EMPTY_PERIOD: PeriodUsage = { messages: 0, tokens: 0, models: [] };
-const rolloutCache = new Map<string, { signature: string; parsed: ParsedRolloutFile }>();
 const DEFAULT_SHORT_WINDOW_MINS = 5 * 60;
 const SHORT_WINDOW_MAX_MINS = 12 * 60;
 const WEEKLY_WINDOW_MINS = 7 * 24 * 60;
@@ -22,6 +21,23 @@ export async function captureCodexLocal(
   api: FileApi,
   home: string,
   now = new Date(),
+  upstream?: {
+    events: TokenUsageEvent[];
+    engine: 'ccusage-rust' | 'typescript-compatibility';
+    error?: string;
+    eventsRangeFromUnix?: number;
+    eventsRangeToUnix?: number;
+    summary?: {
+      today: PeriodUsage;
+      current: PeriodUsage;
+      previous: PeriodUsage;
+      month: PeriodUsage;
+      total: PeriodUsage;
+      subtotal: PeriodUsage;
+      daily: Array<{ day: string; tokens: number }>;
+    };
+    latestRateLimits?: ParsedRolloutFile['latestRateLimits'];
+  },
 ): Promise<ProviderLocalUsage> {
   const root = `${home}/.codex`;
   const available = await pathExists(api, root);
@@ -30,6 +46,8 @@ export async function captureCodexLocal(
       provider: 'codex',
       available: false,
       hasTokens: false,
+      usage_engine: upstream?.engine,
+      usage_engine_error: upstream?.error,
       today: { ...EMPTY_PERIOD },
       current: { ...EMPTY_PERIOD },
       month: { ...EMPTY_PERIOD },
@@ -46,31 +64,34 @@ export async function captureCodexLocal(
     authOk = false;
   }
 
-  const files = await walkFiles(
-    api,
-    `${home}/.codex/sessions`,
-    (name) => name.startsWith('rollout-') && name.endsWith('.jsonl'),
-    0,
-    4,
-  );
-  const parsedFiles = await Promise.all(files.map(async (path) => ({
-    path,
-    parsed: await readCachedRollout(api, path),
-  })));
-  const events: TokenUsageEvent[] = [];
-  let latestRateLimits: ParsedRolloutFile['latestRateLimits'] = null;
+  const rustEngineActive = upstream?.engine === 'ccusage-rust';
+  // Reuse the Rust bridge array directly; copying millions of event objects
+  // can briefly double the renderer's resident memory.
+  const events: TokenUsageEvent[] = rustEngineActive && upstream ? upstream.events : [];
+  let latestRateLimits: ParsedRolloutFile['latestRateLimits'] = upstream?.latestRateLimits ?? null;
 
-  for (const { path, parsed } of parsedFiles) {
-    if (!parsed) continue;
-    const fallbackTimestamp = rolloutPathTimestamp(path);
-    events.push(...parsed.events.map((event) => (
-      event.timestamp_unix > 0 ? event : { ...event, timestamp_unix: fallbackTimestamp }
-    )));
-    if (
-      parsed.latestRateLimits
-      && (!latestRateLimits || parsed.latestRateLimits.timestamp_unix > latestRateLimits.timestamp_unix)
-    ) {
-      latestRateLimits = parsed.latestRateLimits;
+  // A desktop engine failure must not fall through to parsing every large
+  // rollout in the renderer; surface the engine error and keep startup bounded.
+  if (!rustEngineActive && !upstream?.error) {
+    const files = await walkFiles(
+      api,
+      `${root}/sessions`,
+      (name) => name.startsWith('rollout-') && name.endsWith('.jsonl'),
+      0,
+      4,
+    );
+    // Keep compatibility mode bounded too: only one raw JSONL file is read at a time.
+    for (const path of files) {
+      const parsed = await readCachedRollout(api, path);
+      if (!parsed) continue;
+      const fallbackTimestamp = rolloutPathTimestamp(path);
+      events.push(...parsed.events.map((event) => (
+        event.timestamp_unix > 0 ? event : { ...event, timestamp_unix: fallbackTimestamp }
+      )));
+      const fileRateLimits = parsed.latestRateLimits;
+      if (fileRateLimits && (!latestRateLimits || fileRateLimits.timestamp_unix > latestRateLimits.timestamp_unix)) {
+        latestRateLimits = fileRateLimits;
+      }
     }
   }
 
@@ -87,22 +108,25 @@ export async function captureCodexLocal(
   const monthStartUnix = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
   const todayStartUnix = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000);
 
-  const today = usageFromEvents(events.filter((event) => event.timestamp_unix >= todayStartUnix));
+  const today = upstream?.summary?.today
+    ?? usageFromEvents(events.filter((event) => event.timestamp_unix >= todayStartUnix));
   const previousStart = currentStart - windowMinutes * 60;
   // Keep adjacent quota windows disjoint: previous=[previousStart,currentStart),
   // current=[currentStart,now]. Do not derive either value from cumulative totals.
-  const previous = usageFromEvents(events.filter((event) => (
-    event.timestamp_unix >= previousStart && event.timestamp_unix < currentStart
-  )));
-  const current = usageFromEvents(events.filter((event) => (
+  const current = upstream?.summary?.current ?? usageFromEvents(events.filter((event) => (
     event.timestamp_unix >= currentStart && event.timestamp_unix <= nowUnix
   )));
-  const subtotalCheckpoint = readLocalTokenSubtotalCheckpoint();
-  const subtotal = usageFromEvents(events.filter((event) => (
-    subtotalCheckpoint == null || event.timestamp_unix > subtotalCheckpoint
+  const previous = upstream?.summary?.previous ?? usageFromEvents(events.filter((event) => (
+    event.timestamp_unix >= previousStart && event.timestamp_unix < currentStart
   )));
-  const month = usageFromEvents(events.filter((event) => event.timestamp_unix >= monthStartUnix));
-  const total = usageFromEvents(events);
+  const subtotalCheckpoint = readLocalTokenSubtotalCheckpoint();
+  const subtotal = upstream?.summary?.subtotal
+    ?? usageFromEvents(events.filter((event) => (
+      subtotalCheckpoint == null || event.timestamp_unix > subtotalCheckpoint
+    )));
+  const month = upstream?.summary?.month
+    ?? usageFromEvents(events.filter((event) => event.timestamp_unix >= monthStartUnix));
+  const total = upstream?.summary?.total ?? usageFromEvents(events);
   const currentPeriod = hasPeriodBoundary
     ? periodBoundary(currentStart, activeWindow!.reset_at_unix, windowMinutes)
     : undefined;
@@ -130,6 +154,16 @@ export async function captureCodexLocal(
     previous_period_start: previousPeriod?.start_unix,
     previous_period_end: previousPeriod?.end_unix,
     previous_period_key: previousPeriod?.key,
+    usage_engine: upstream?.engine ?? 'typescript-compatibility',
+    usage_engine_error: upstream?.error,
+    events,
+    daily_usage: upstream?.summary?.daily,
+    local_rate_limits: latestRateLimits ? {
+      primary: latestRateLimits.primary,
+      secondary: latestRateLimits.secondary,
+    } : undefined,
+    events_range_from_unix: upstream?.eventsRangeFromUnix,
+    events_range_to_unix: upstream?.eventsRangeToUnix,
   };
 }
 
@@ -207,24 +241,10 @@ function periodBoundary(startUnix: number, endUnix: number, windowMinutes: numbe
 }
 
 async function readCachedRollout(api: FileApi, path: string): Promise<ParsedRolloutFile | null> {
-  const cached = rolloutCache.get(path);
-  let signature = '';
-  if (api.getStats) {
-    try {
-      const stats = await api.getStats(path);
-      signature = `${stats.modifiedAt}:${stats.size}`;
-      if (cached?.signature === signature) return cached.parsed;
-    } catch {
-      if (cached) return cached.parsed;
-    }
-  }
-
   try {
-    const parsed = parseRolloutFile(await api.readFile(path));
-    rolloutCache.set(path, { signature, parsed });
-    return parsed;
+    return parseRolloutFile(await api.readFile(path));
   } catch {
-    return cached?.parsed ?? null;
+    return null;
   }
 }
 
@@ -245,6 +265,7 @@ function usageFromEvents(events: TokenUsageEvent[]): PeriodUsage {
       event.input_tokens,
       event.cached_input_tokens,
       event.output_tokens,
+      event.cache_creation_tokens,
     );
   }
   return enrichWithCosts(buildPeriodUsage(events.length, tokens, modelMap));

@@ -2,9 +2,12 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import type { ProviderLocalUsage, UsagePeriodKey, UsageSnapshot } from '../types';
 import { buildUsagePortfolio, summarizePeriodCost } from '../services/usageAggregation';
 import { formatTokenExact, formatTokenM } from '../services/tokenDisplay';
+import { formatUsdEstimate } from '../services/usageLogic';
 import ModelList from './ModelList';
 import QuotaList from './QuotaList';
 import UsagePeriodCards from './UsagePeriodCards';
+import UsageCharts from './UsageCharts';
+import UsageEventAnalysis from './UsageEventAnalysis';
 
 interface Props {
   data: UsageSnapshot | null;
@@ -23,6 +26,7 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
   const selectedLabel = period === 'current' ? '当前周期' : period === 'month' ? '当月' : '总计';
   const selectedShortLabel = period === 'current' ? '本期' : period === 'month' ? '本月' : '总计';
   const codexModels = data?.total_local?.models ?? data?.month_local.models ?? [];
+  const codexEngine = providers.find((provider) => provider.provider === 'codex');
 
   return (
     <div className="usage-workspace usage-portfolio">
@@ -92,7 +96,7 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
                 </span>
               </div>
               <AnalysisMetric label={selectedLabel} value={formatTokenM(usage.tokens)} tokenValue={usage.tokens} />
-              <AnalysisMetric label="估价" value={`~$${estimate.usd.toFixed(2)}`} />
+              <AnalysisMetric label="估价" value={`~${formatUsdEstimate(estimate.usd)}`} />
               <div className="provider-analysis-share">
                 <div>
                   <span>占比</span>
@@ -113,6 +117,20 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
         </div>
       </section>
 
+      {codexEngine && (
+        <div
+          className={`usage-engine-status${codexEngine.usage_engine_error ? ' is-warning' : ''}`}
+          role={codexEngine.usage_engine_error ? 'alert' : 'status'}
+        >
+          <span className="usage-engine-dot" aria-hidden />
+          {codexEngine.usage_engine === 'ccusage-rust'
+            ? 'Codex 日志：ccusage Rust 解析与去重'
+            : codexEngine.usage_engine_error
+              ? 'ccusage Rust 引擎不可用，当前由兼容解析器提供本地数据'
+              : 'Codex 日志：本地兼容解析器'}
+        </div>
+      )}
+
       <div className="usage-detail-grid usage-detail-grid--portfolio usage-detail-grid--single">
         <ModelList
           models={selectedUsage.models}
@@ -120,6 +138,15 @@ export default function UsageAnalysisWorkspace({ data, providers }: Props) {
           title={`${selectedShortLabel}模型`}
         />
       </div>
+
+      <UsageCharts
+        models={selectedUsage.models}
+        events={codexEngine?.events ?? []}
+        dailyUsage={codexEngine?.daily_usage}
+        periodLabel={selectedShortLabel}
+      />
+
+      <UsageEventAnalysis providers={providers} />
 
       <QuotaList buckets={data?.rate_limits} usedModels={codexModels} title="模型额度" />
     </div>

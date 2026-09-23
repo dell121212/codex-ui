@@ -63,6 +63,54 @@ describe('Codex local usage periods', () => {
     expect(usage.current_period_key).toBe(
       `7d:${Date.parse('2026-08-15T14:00:00.000Z') / 1000}:${Date.parse('2026-08-22T14:00:00.000Z') / 1000}`,
     );
+
+    const compatibility = await captureCodexLocal(
+      api,
+      '/home/test',
+      new Date('2026-08-16T12:00:00.000Z'),
+      { events: [], engine: 'typescript-compatibility' },
+    );
+    expect(compatibility.total.tokens).toBe(150);
+    expect(compatibility.current_period_start).toBe(usage.current_period_start);
+
+    const rust = await captureCodexLocal(
+      api,
+      '/home/test',
+      new Date('2026-08-16T12:00:00.000Z'),
+      {
+        engine: 'ccusage-rust',
+        events: [{
+          timestamp: '2026-08-16T10:00:00.000Z',
+          timestamp_unix: Date.parse('2026-08-16T10:00:00.000Z') / 1000,
+          model: 'gpt-5.6-sol',
+          input_tokens: 100,
+          cached_input_tokens: 0,
+          output_tokens: 50,
+          total_tokens: 150,
+        }],
+        latestRateLimits: {
+          timestamp_unix: Date.parse('2026-08-16T10:00:00.000Z') / 1000,
+          primary: {
+            used: 4,
+            limit: 100,
+            percent: 4,
+            window_duration_mins: 10_080,
+            reset_at_unix: Date.parse('2026-08-22T14:00:00.000Z') / 1000,
+            remaining_secs: 6 * 24 * 60 * 60 + 4 * 60 * 60,
+          },
+          secondary: {
+            used: 12,
+            limit: 100,
+            percent: 12,
+            window_duration_mins: 300,
+            reset_at_unix: Date.parse('2026-08-16T14:00:00.000Z') / 1000,
+            remaining_secs: 4 * 60 * 60,
+          },
+        },
+      },
+    );
+    expect(rust.total.tokens).toBe(150);
+    expect(rust.current_period_start).toBe(usage.current_period_start);
   });
 
   it('prefers an explicit weekly window over a short window when durations are mixed', async () => {

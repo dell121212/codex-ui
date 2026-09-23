@@ -1,6 +1,6 @@
 import type { ModelUsage } from '../types';
 import { formatTokenExact, formatTokenM } from '../services/tokenDisplay';
-import { modelTokenTotal, rankModelsByTokens } from '../services/usageLogic';
+import { estimateModelCost, formatUsdEstimate, modelTokenTotal, rankModelsByTokens } from '../services/usageLogic';
 
 interface Props {
   models?: ModelUsage[];
@@ -58,6 +58,7 @@ export default function ModelList({ models, monthModels, title, preferMonth = fa
         const color = BAR_COLORS[i % BAR_COLORS.length];
         const barPct = Math.max(3, (totalTok / maxTok) * 100);
         const isToday = (models ?? []).some((t) => t.model === m.model && modelTokenTotal(t) > 0);
+        const costBreakdown = estimateModelCost(m);
 
         return (
           <div key={m.model} className="model-row">
@@ -73,9 +74,17 @@ export default function ModelList({ models, monthModels, title, preferMonth = fa
                 >
                   {formatTokenM(totalTok)}
                 </span>
-                {m.cost_usd != null ? ` · $${m.cost_usd.toFixed(2)}` : ''}
+                {m.cost_usd != null ? <> · ~{formatUsdEstimate(m.cost_usd)}</> : ''}
               </span>
             </div>
+            {m.cost_usd != null && costBreakdown && (
+              <div className="model-cost-breakdown" aria-label={m.model + ' 成本分类'}>
+                <span>输入 {formatUsdEstimate(costBreakdown.inputUsd)}</span>
+                <span>缓存读 {formatUsdEstimate(costBreakdown.cachedInputUsd)}</span>
+                <span>缓存写 {formatUsdEstimate(costBreakdown.cacheWriteUsd)}</span>
+                <span>输出 {formatUsdEstimate(costBreakdown.outputUsd)}</span>
+              </div>
+            )}
             <div className="progress-bg">
               <div
                 className="progress-fill"

@@ -968,13 +968,30 @@ export async function captureAllLocalProviders(
   api: FileApi,
   home: string,
   now = new Date(),
+  codexEngine?: {
+    events: import('../types').UsageEvent[];
+    engine: 'ccusage-rust' | 'typescript-compatibility';
+    error?: string;
+    summary?: {
+      today: PeriodUsage;
+      current: PeriodUsage;
+      previous: PeriodUsage;
+      month: PeriodUsage;
+      total: PeriodUsage;
+      subtotal: PeriodUsage;
+      daily: Array<{ day: string; tokens: number }>;
+    };
+    latestRateLimits?: import('./usageLogic').ParsedRolloutFile['latestRateLimits'];
+    eventsRangeFromUnix?: number;
+    eventsRangeToUnix?: number;
+  },
 ): Promise<ProviderLocalUsage[]> {
   const results: ProviderLocalUsage[] = [];
 
   for (const probe of LOCAL_PROVIDER_PROBES) {
     try {
       if (probe.id === 'codex') {
-        results.push(await captureCodexLocal(api, home, now));
+        results.push(await captureCodexLocal(api, home, now, codexEngine));
       } else if (probe.id === 'grok') {
         results.push(await captureGrokLocal(api, home, now));
       } else if (probe.id === 'mistral') {
@@ -1010,7 +1027,7 @@ export function mergeProviderModels(list: ProviderLocalUsage[], which: 'today' |
     for (const m of period.models) {
       // Prefix model with provider so Grok/Codex names don't collide in UI.
       const label = p.provider === 'codex' ? m.model : `${p.provider}/${m.model}`;
-      addModelUsage(map, label, m.input_tokens, m.cached_input_tokens, m.output_tokens);
+      addModelUsage(map, label, m.input_tokens, m.cached_input_tokens, m.output_tokens, m.cache_creation_tokens);
     }
   }
   return enrichWithCosts(buildPeriodUsage(messages, tokens, map)).models;

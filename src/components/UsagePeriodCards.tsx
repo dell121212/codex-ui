@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { PeriodUsage, UsagePeriodKey } from '../types';
 import { formatTokenExact, formatTokenM, formatTokenWithUnit, type TokenCount } from '../services/tokenDisplay';
 import { summarizePeriodCost } from '../services/usageAggregation';
+import { formatUsdEstimate } from '../services/usageLogic';
 
 export interface UsagePeriodOption {
   id: UsagePeriodKey;
@@ -115,7 +116,7 @@ export default function UsagePeriodCards({
                 </span>
                 <span className="usage-period-detail">{option.detail}</span>
                 <span className="usage-period-estimate">
-                  估价 ~${cost.usd.toFixed(2)}
+                  估价 ~{formatUsdEstimate(cost.usd)}
                   {cost.unpricedModels.length > 0 ? ` · ${cost.unpricedModels.length} 个模型未计价` : ''}
                 </span>
               </span>

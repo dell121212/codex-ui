@@ -454,6 +454,32 @@ try {
     throw new Error(`Providers header regression failed: ${JSON.stringify(connections)}`);
   }
 
+  await evaluate(send, `(() => {
+    const button = [...document.querySelectorAll('.app-toolbar-nav-item')]
+      .find((node) => node.textContent.includes('用量分析'));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitForExpression(send, 'Boolean(document.querySelector(".event-analysis-card"))');
+  const eventAnalysis = await evaluate(send, `(() => ({
+    dateInputs: document.querySelectorAll('.event-analysis-range input[type="date"]').length,
+    emptyState: document.querySelector('.event-analysis-empty strong')?.textContent ?? '',
+    loadButton: [...document.querySelectorAll('.event-analysis-empty button')].some((node) => node.textContent?.trim() === '加载所选范围'),
+    dailyChart: document.querySelector('.usage-trend-empty')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+    eventBars: document.querySelectorAll('.event-day-column').length,
+  }))()`);
+  const analyticsOverflows = await collectVisibleOverflow(send);
+  if (
+    eventAnalysis.dateInputs !== 2
+    || eventAnalysis.emptyState !== '事件明细按需读取'
+    || !eventAnalysis.loadButton
+    || !eventAnalysis.dailyChart.includes('等待时间戳事件')
+    || eventAnalysis.eventBars !== 0
+    || analyticsOverflows.length
+  ) {
+    throw new Error(`Event analysis empty-state regression failed: ${JSON.stringify({ eventAnalysis, analyticsOverflows })}`);
+  }
+
   console.log('Browser drag regression passed:', {
     cards: result.cards,
     paletteItem: result.palette[0],
@@ -463,6 +489,7 @@ try {
     providersRows: connections.rows,
     companionAction: companionAfter.actionImage,
     refreshCentered: companionBefore.refreshCentered,
+    analyticsEmptyState: eventAnalysis.emptyState,
   });
 } finally {
   socket?.close();
@@ -498,7 +525,9 @@ async function collectVisibleOverflow(send) {
         const rect = node.getBoundingClientRect();
         const frameRect = frame.getBoundingClientRect();
         const horizontalEscape = rect.left < frameRect.left - 1 || rect.right > frameRect.right + 1;
-        const scrollEscape = node.scrollWidth > node.clientWidth + 1;
+        const style = getComputedStyle(node);
+        const deliberateTruncation = style.overflow === 'hidden' && style.textOverflow === 'ellipsis';
+        const scrollEscape = node.scrollWidth > node.clientWidth + 1 && !deliberateTruncation;
         if (!horizontalEscape && !scrollEscape) return [];
         return [{
           selector: selector(node),

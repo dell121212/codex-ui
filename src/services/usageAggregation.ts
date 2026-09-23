@@ -46,6 +46,7 @@ export function aggregatePeriods(periods: PeriodUsage[]): PeriodUsage {
   const models = new Map<string, {
     input: number;
     cached: number;
+    cacheCreation: number;
     output: number;
     cost: number;
     fullyPriced: boolean;
@@ -56,12 +57,14 @@ export function aggregatePeriods(periods: PeriodUsage[]): PeriodUsage {
       const current = models.get(model.model) ?? {
         input: 0,
         cached: 0,
+        cacheCreation: 0,
         output: 0,
         cost: 0,
         fullyPriced: true,
       };
       current.input += model.input_tokens;
       current.cached += model.cached_input_tokens;
+      current.cacheCreation += model.cache_creation_tokens ?? 0;
       current.output += model.output_tokens;
       current.fullyPriced = current.fullyPriced && model.cost_usd !== null;
       current.cost += model.cost_usd ?? 0;
@@ -73,6 +76,7 @@ export function aggregatePeriods(periods: PeriodUsage[]): PeriodUsage {
     model,
     input_tokens: usage.input,
     cached_input_tokens: usage.cached,
+    cache_creation_tokens: usage.cacheCreation,
     output_tokens: usage.output,
     cost_usd: usage.fullyPriced ? usage.cost : null,
     percent_of_total: 0,
@@ -94,7 +98,7 @@ export function summarizePeriodCost(period: PeriodUsage): {
   unpricedModels: string[];
 } {
   return {
-    usd: roundMoney(period.models.reduce((total, model) => total + (model.cost_usd ?? 0), 0)),
+    usd: period.models.reduce((total, model) => total + (model.cost_usd ?? 0), 0),
     unpricedModels: period.models
       .filter((model) => model.cost_usd === null)
       .map((model) => model.model),

@@ -19,6 +19,7 @@ export interface ModelUsage {
   model: string;
   input_tokens: number;
   cached_input_tokens: number;
+  cache_creation_tokens?: number;
   output_tokens: number;
   cost_usd: number | null;
   percent_of_total: number;
@@ -28,6 +29,25 @@ export interface PeriodUsage {
   messages: number;
   tokens: number;
   models: ModelUsage[];
+}
+
+/** One deduplicated, timestamped model-usage record from a local provider. */
+export interface UsageEvent {
+  timestamp_unix: number;
+  timestamp_unix_ms?: number;
+  timestamp?: string;
+  model: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  session_id?: string;
+  project_path?: string;
+  parent_session_id?: string;
+  cache_creation_tokens?: number;
+  reasoning_output_tokens?: number;
+  service_tier?: 'standard' | 'fast' | null;
+  cost_usd?: number | null;
 }
 
 export type UsagePeriodKey = 'current' | 'month' | 'total';
@@ -103,6 +123,16 @@ export interface ProviderLocalUsage {
   available: boolean;
   /** At least one session with tokens this month/today */
   hasTokens: boolean;
+  /** Parser used to create the provider's local usage records. */
+  usage_engine?: 'ccusage-rust' | 'typescript-compatibility';
+  usage_engine_error?: string;
+  /** Raw, de-duplicated records used for precise range and session analysis. */
+  events?: UsageEvent[];
+  /** Inclusive UTC coverage bounds for the loaded event slice. */
+  events_range_from_unix?: number;
+  events_range_to_unix?: number;
+  daily_usage?: Array<{ day: string; tokens: number }>;
+  local_rate_limits?: { primary: WindowUsage; secondary: WindowUsage };
   authOk?: boolean;
   authPath?: string;
   lastActiveAt?: string;

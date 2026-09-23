@@ -17,10 +17,9 @@ import {
   mostConstrainedCodexWindow,
   normalizeCodexWindows,
   parseCodexUsage,
-  parseJson,
-  parseLocalLimitWindow,
   parseWhamResponse,
 } from './usageLogic';
+import { parseCodexBarQuota } from './codexBarQuota';
 import {
   buildMistralTokenQuota,
   captureAllLocalProviders,
@@ -34,6 +33,8 @@ import {
   parseVibeWhoAmI,
 } from './localProviders';
 import { mergeStableLocalProviders } from './usageContinuity';
+import { parseCcusageBridgeResponse } from './ccusageBridge';
+import { readLocalTokenSubtotalCheckpoint } from './localTokenSubtotal';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
@@ -65,12 +66,15 @@ let cached: { snapshot: UsageSnapshot; at: number } | null = null;
 let refreshInFlight: Promise<UsageSnapshot> | null = null;
 let quotaAlertActive = false;
 let refreshTimer: number | null = null;
+let codexEngineQueue: Promise<void> = Promise.resolve();
 const listeners = new Set<(snapshot: UsageSnapshot) => void>();
 
 /** Serve memory cache as fresh for this long (matches default refresh cadence). */
 const FRESH_MS = 55_000;
 /** Disk SWR: still paint immediately, revalidate in background. */
-const DISK_CACHE_KEY = 'usage_cache_v1';
+// v2 deliberately omits raw events. v1 could grow to hundreds of MB and was
+// parsed into memory before the first refresh, alongside the newly loaded log.
+const DISK_CACHE_KEY = 'usage_cache_v2';
 /** Mistral chat rate-limit probe is expensive — reuse for 10 minutes. */
 const MISTRAL_PROBE_TTL_MS = 10 * 60 * 1000;
 let mistralProbeCache: {
@@ -95,6 +99,12 @@ function isCacheFresh(at: number): boolean {
   return Date.now() - at < FRESH_MS;
 }
 
+function hasEventSlice(snapshot: UsageSnapshot): boolean {
+  return snapshot.local_providers.some((provider) => (
+    provider.provider === 'codex' && provider.events !== undefined
+  ));
+}
+
 async function loadDiskCache(): Promise<{ snapshot: UsageSnapshot; at: number } | null> {
   try {
     const raw = await nativeApi()?.storage.getData(DISK_CACHE_KEY);
@@ -110,7 +120,14 @@ async function loadDiskCache(): Promise<{ snapshot: UsageSnapshot; at: number } 
 
 async function saveDiskCache(snapshot: UsageSnapshot, at: number): Promise<void> {
   try {
-    await nativeApi()?.storage.setData(DISK_CACHE_KEY, JSON.stringify({ snapshot, at }));
+    const compactSnapshot: UsageSnapshot = {
+      ...snapshot,
+      local_providers: snapshot.local_providers.map((provider) => ({
+        ...provider,
+        events: undefined,
+      })),
+    };
+    await nativeApi()?.storage.setData(DISK_CACHE_KEY, JSON.stringify({ snapshot: compactSnapshot, at }));
   } catch {
     // best-effort; ignore storage failures
   }
@@ -147,7 +164,7 @@ export function initNeutralinoBackend() {
     void api.window.show();
     void api.window.focus();
     // Don't force a full network round-trip when cache is still fresh.
-    if (!cached || !isCacheFresh(cached.at)) {
+    if (!cached || !isCacheFresh(cached.at) || !hasEventSlice(cached.snapshot)) {
       void refreshUsage();
     }
   });
@@ -171,7 +188,7 @@ export async function getUsage(): Promise<UsageSnapshot> {
   await ensureMemoryCache();
 
   // Fresh enough — serve memory cache.
-  if (cached && isCacheFresh(cached.at)) {
+  if (cached && isCacheFresh(cached.at) && hasEventSlice(cached.snapshot)) {
     return cached.snapshot;
   }
   // Stale-while-revalidate: paint last good snapshot, refresh in background.
@@ -195,7 +212,8 @@ export async function refreshUsage(): Promise<UsageSnapshot> {
     const previous = cached?.snapshot ?? null;
 
     // Phase A — local only (no network). Merge last remote windows so bars don't flash empty.
-    const localSnap = await fetchSnapshot(false, previous);
+    const capturedLocal = await captureLocalProvidersOnly();
+    const localSnap = await fetchSnapshot(false, previous, capturedLocal);
     cached = {
       snapshot: localSnap,
       // Keep previous freshness so concurrent getUsage still SWR-refreshes if needed.
@@ -204,7 +222,7 @@ export async function refreshUsage(): Promise<UsageSnapshot> {
     publishSnapshot(localSnap);
 
     // Phase B — full remote (parallel inside fetchSnapshot).
-    const snapshot = await fetchSnapshot(true, localSnap);
+    const snapshot = await fetchSnapshot(true, localSnap, capturedLocal);
     const now = Date.now();
     cached = { snapshot, at: now };
     void saveDiskCache(snapshot, now);
@@ -369,6 +387,7 @@ export async function quitApp(): Promise<void> {
 async function fetchSnapshot(
   includeRemote = true,
   previous: UsageSnapshot | null = null,
+  capturedLocalOverride?: ProviderLocalUsage[],
 ): Promise<UsageSnapshot> {
   const now = new Date();
   let error: string | undefined;
@@ -377,7 +396,7 @@ async function fetchSnapshot(
   let remoteLimitsOk = false;
 
   // Local filesystem capture first (no network).
-  const capturedLocal = await captureLocalProvidersOnly();
+  const capturedLocal = capturedLocalOverride ?? await captureLocalProvidersOnly();
   const localOnly = mergeStableLocalProviders(
     capturedLocal,
     previous?.local_providers,
@@ -457,7 +476,7 @@ async function fetchSnapshot(
   }
 
   // Local JSONL is a last-resort gap filler only.
-  const localLimits = await parseLatestRateLimits();
+  const localLimits = codexLocal?.local_rate_limits ?? null;
   // A successful remote read with one missing lane is authoritative: newer
   // accounts can legitimately expose only the weekly window. Do not resurrect
   // an old short window from stale session JSONL in that case.
@@ -532,14 +551,130 @@ async function captureLocalProvidersOnly(): Promise<ProviderLocalUsage[]> {
   if (!api) return [];
   try {
     const home = await api.os.getPath('home');
-    return await captureAllLocalProviders(
-      {
-        readFile: (path) => api.filesystem.readFile(path),
-        readDirectory: (path) => api.filesystem.readDirectory(path),
-        getStats: (path) => api.filesystem.getStats(path),
-      },
-      home,
-    );
+    const fileApi = {
+      readFile: (path: string) => api.filesystem.readFile(path),
+      readDirectory: (path: string) => api.filesystem.readDirectory(path),
+      getStats: (path: string) => api.filesystem.getStats(path),
+    };
+    const now = new Date();
+    const codexEngine = await captureCodexEngine(api, home);
+    return await captureAllLocalProviders(fileApi, home, now, codexEngine);
+  } catch {
+    return [];
+  }
+}
+
+async function captureCodexEngine(
+  api: NeutralinoApi,
+  home: string,
+  eventRange?: { from: Date; to: Date },
+): Promise<{
+  events: import('../types').UsageEvent[];
+  engine: 'ccusage-rust' | 'typescript-compatibility';
+  error?: string;
+  summary?: {
+    today: import('../types').PeriodUsage;
+    current: import('../types').PeriodUsage;
+    previous: import('../types').PeriodUsage;
+    month: import('../types').PeriodUsage;
+    total: import('../types').PeriodUsage;
+    subtotal: import('../types').PeriodUsage;
+    daily: Array<{ day: string; tokens: number }>;
+  };
+  latestRateLimits?: import('./usageLogic').ParsedRolloutFile['latestRateLimits'];
+  eventsRangeFromUnix?: number;
+  eventsRangeToUnix?: number;
+}> {
+  let path: string | null = null;
+  try {
+    const executable = await currentExecutablePath();
+    // The packaged archive renames Neutralino binaries to codex-ui-linux_*;
+    // derive the sidecar from the containing directory instead of its name.
+    const executableDirectory = executable.slice(0, executable.lastIndexOf('/') + 1);
+    const candidate = `${executableDirectory}ccusage-codex`;
+    if ((await api.filesystem.getStats(candidate)).isFile) path = candidate;
+  } catch {
+    // A Vite development session has no packaged Rust sidecar yet.
+  }
+
+  if (!path) {
+    return {
+      events: [],
+      engine: 'typescript-compatibility',
+      error: 'ccusage Rust sidecar was not found beside the app; full log scan skipped to keep memory bounded',
+    };
+  }
+
+  return runSerializedCodexEngine(async () => {
+    try {
+      const dataPath = await api.os.getPath('data');
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const eventsFrom = eventRange?.from ?? now;
+      const eventsTo = eventRange?.to ?? now;
+      const subtotalCheckpoint = readLocalTokenSubtotalCheckpoint();
+      const summaryUpper = new Date(now.getTime() + 1000);
+      const dailyWindows = Array.from({ length: 7 }, (_, index) => {
+        const from = new Date(todayStart);
+        from.setDate(from.getDate() - (6 - index));
+        const to = new Date(from);
+        to.setDate(to.getDate() + 1);
+        const day = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`;
+        return { day, from: from.toISOString(), to: to.toISOString() };
+      });
+      const output = await api.os.execCommand(shellQuote(path), {
+        envs: {
+          HOME: home,
+          CODEX_HOME: `${home}/.codex`,
+          CODEX_UI_EVENT_CACHE: `${dataPath}/codex-ui/ccusage-events-v3.json`,
+          CODEX_UI_EVENTS_FROM: eventsFrom.toISOString(),
+          CODEX_UI_EVENTS_TO: eventsTo.toISOString(),
+          CODEX_UI_SUMMARY_NOW: summaryUpper.toISOString(),
+          CODEX_UI_SUMMARY_TODAY_START: todayStart.toISOString(),
+          CODEX_UI_SUMMARY_MONTH_START: monthStart.toISOString(),
+          CODEX_UI_SUMMARY_SUBTOTAL_START: subtotalCheckpoint
+            ? new Date(subtotalCheckpoint * 1000).toISOString()
+            : '',
+          CODEX_UI_DAILY_WINDOWS: JSON.stringify(dailyWindows),
+        },
+      });
+      if (output.exitCode !== 0) {
+        throw new Error(output.stdErr.trim() || `ccusage bridge exited with ${output.exitCode}`);
+      }
+      const result = parseCcusageBridgeResponse(output.stdOut);
+      return {
+        events: eventRange ? result.events : [],
+        engine: 'ccusage-rust',
+        summary: result.summary,
+        latestRateLimits: result.latestRateLimits,
+        eventsRangeFromUnix: Math.floor(eventsFrom.getTime() / 1000),
+        eventsRangeToUnix: Math.floor(eventsTo.getTime() / 1000),
+      };
+    } catch (error) {
+      return {
+        events: [],
+        engine: 'typescript-compatibility',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+}
+
+function runSerializedCodexEngine<T>(run: () => Promise<T>): Promise<T> {
+  const result = codexEngineQueue.then(run, run);
+  codexEngineQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+/** Load an older Codex date range on demand; startup only retains a short slice. */
+export async function queryCodexUsageEvents(from: Date, to: Date): Promise<import('../types').UsageEvent[]> {
+  const api = nativeApi();
+  if (!api) return [];
+  try {
+    const home = await api.os.getPath('home');
+    const result = await captureCodexEngine(api, home, { from, to });
+    return result.engine === 'ccusage-rust' ? result.events : [];
   } catch {
     return [];
   }
@@ -626,16 +761,53 @@ async function fetchCodexRemoteQuota(): Promise<{
     };
   } catch (appServerError) {
     const auth = await loadCodexAuth();
+    let httpError: unknown = appServerError;
+    if (auth.ok) {
+      try {
+        const remote = await fetchWhamUsage(auth.auth);
+        if (!remote.rate_limits.length) throw appServerError;
+        return {
+          provider: 'codex-http',
+          window_5h: remote.window_5h,
+          window_weekly: remote.window_weekly,
+          rate_limits: remote.rate_limits,
+          banked_resets: remote.banked_resets,
+        };
+      } catch (error) {
+        httpError = error;
+      }
+    }
+    const codexBar = await fetchCodexBarQuota();
+    if (codexBar) {
+      const [lifetime_used, last_reset_at] = await Promise.all([getResetCount(), getLastResetAt()]);
+      return {
+        provider: 'codexbar-cli',
+        ...codexBar,
+        banked_resets: { available: null, credits: [], lifetime_used, last_reset_at },
+      };
+    }
     if (!auth.ok) throw new Error(`NO_AUTH: ${auth.reason}`);
-    const remote = await fetchWhamUsage(auth.auth);
-    if (!remote.rate_limits.length) throw appServerError;
-    return {
-      provider: 'codex-http',
-      window_5h: remote.window_5h,
-      window_weekly: remote.window_weekly,
-      rate_limits: remote.rate_limits,
-      banked_resets: remote.banked_resets,
-    };
+    throw httpError instanceof Error ? httpError : appServerError;
+  }
+}
+
+/** Optional MIT CodexBar CLI fallback after the native and HTTP quota sources fail. */
+async function fetchCodexBarQuota() {
+  const api = nativeApi();
+  if (!api) return null;
+  try {
+    const available = await api.os.execCommand('command -v codexbar');
+    const executable = available.stdOut.trim();
+    if (available.exitCode !== 0 || !executable.startsWith('/')) return null;
+    const home = await api.os.getPath('home');
+    const result = await api.os.execCommand(
+      `${shellQuote(executable)} usage --provider codex --format json`,
+      { envs: { HOME: home } },
+    );
+    if (result.exitCode !== 0) return null;
+    return parseCodexBarQuota(result.stdOut);
+  } catch {
+    return null;
   }
 }
 
@@ -1311,87 +1483,6 @@ async function resolveBin(name: string): Promise<string | null> {
   } catch {
     binCache.set(name, null);
     return null;
-  }
-}
-
-async function parseLatestRateLimits(): Promise<{ primary: WindowUsage; secondary: WindowUsage } | null> {
-  const api = nativeApi();
-  if (!api) return null;
-
-  try {
-    const home = await api.os.getPath('home');
-    let latest: { timestamp: number; primary: WindowUsage; secondary: WindowUsage } | null = null;
-
-    for (const day of recentDays(14)) {
-      for (const path of await rolloutFilesForDay(day, home)) {
-        latest = await latestRateLimitsInFile(path, latest);
-      }
-      if (latest) break;
-    }
-
-    return latest ? { primary: latest.primary, secondary: latest.secondary } : null;
-  } catch {
-    return null;
-  }
-}
-
-async function latestRateLimitsInFile(
-  path: string,
-  latest: { timestamp: number; primary: WindowUsage; secondary: WindowUsage } | null,
-) {
-  const api = nativeApi();
-  if (!api) return latest;
-
-  try {
-    const content = await api.filesystem.readFile(path);
-    for (const line of content.split('\n')) {
-      const parsed = parseJson(line);
-      const parsedRecord = record(parsed);
-      const payload = record(parsedRecord.payload);
-      const rateLimits = record(payload.rate_limits);
-      if (payload.type !== 'token_count' || !payload.rate_limits) continue;
-      const primary = parseLocalLimitWindow(rateLimits.primary);
-      const secondary = parseLocalLimitWindow(rateLimits.secondary);
-      if (!primary && !secondary) continue;
-      const ts = Date.parse(String(parsedRecord.timestamp ?? payload.timestamp ?? '')) || Date.now();
-      if (!latest || ts > latest.timestamp) {
-        latest = {
-          timestamp: ts,
-          primary: primary ?? { ...EMPTY_WINDOW },
-          secondary: secondary ?? { ...EMPTY_WINDOW },
-        };
-      }
-    }
-  } catch {
-    return latest;
-  }
-
-  return latest;
-}
-
-async function rolloutFilesForDay(day: Date, homeOverride?: string): Promise<string[]> {
-  const api = nativeApi();
-  if (!api) return [];
-  try {
-    const home = homeOverride ?? await api.os.getPath('home');
-    const y = String(day.getFullYear()).padStart(4, '0');
-    const m = String(day.getMonth() + 1).padStart(2, '0');
-    const d = String(day.getDate()).padStart(2, '0');
-    const dir = `${home}/.codex/sessions/${y}/${m}/${d}`;
-    const entries = await api.filesystem.readDirectory(dir);
-    return entries
-      .filter((entry) => entry.type === 'FILE' && entry.entry.startsWith('rollout-') && entry.entry.endsWith('.jsonl'))
-      .map((entry) => `${dir}/${entry.entry}`);
-  } catch {
-    return [];
-  }
-}
-
-function* recentDays(count: number): Generator<Date> {
-  const day = new Date();
-  for (let i = 0; i < count; i += 1) {
-    yield new Date(day);
-    day.setDate(day.getDate() - 1);
   }
 }
 

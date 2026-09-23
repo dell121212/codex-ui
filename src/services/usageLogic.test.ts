@@ -5,6 +5,8 @@ import {
   computeSpend,
   EMPTY_WINDOW,
   enrichWithCosts,
+  estimateModelCost,
+  formatUsdEstimate,
   isWindowMissing,
   mostConstrainedCodexWindow,
   normalizeCodexWindows,
@@ -31,12 +33,12 @@ describe('Codex session JSONL parsing', () => {
 
     expect(parsed.messages).toBe(1);
     expect(parsed.tokens).toBe(81071);
-    expect(parsed.modelMap.get('gpt-5')).toEqual({ input: 80044, cached: 4480, output: 1027 });
+    expect(parsed.modelMap.get('gpt-5')).toEqual({ input: 80044, cached: 4480, cacheCreation: 0, output: 1027 });
   });
 
   it('parses nested message usage and token aliases', () => {
     const content = `
-{"timestamp":"2026-07-07T03:35:40.594Z","message":{"role":"assistant","model":"gpt-4o","usage":{"prompt_tokens":1000,"prompt_tokens_details":{"cached_tokens":400},"completion_tokens":200,"total_tokens":1200}}}
+{"timestamp":"2026-07-07T03:35:40.594Z","message":{"role":"assistant","model":"gpt-4o","usage":{"prompt_tokens":1000,"prompt_tokens_details":{"cached_tokens":400},"cache_creation_input_tokens":100,"completion_tokens":200,"total_tokens":1200}}}
 {"timestamp":"2026-07-07T03:36:40.594Z","role":"assistant","model":"gpt-4o-mini","usage":{"promptTokens":10,"cachedInputTokens":3,"completionTokens":5,"totalTokens":15}}
 `;
 
@@ -47,6 +49,7 @@ describe('Codex session JSONL parsing', () => {
       model: 'gpt-4o',
       input_tokens: 1000,
       cached_input_tokens: 400,
+      cache_creation_tokens: 100,
       output_tokens: 200,
     });
     expect(usage.models[1]).toMatchObject({
@@ -77,6 +80,7 @@ describe('Codex session JSONL parsing', () => {
     expect(parsed.modelMap.get('gpt-5.6-sol')).toEqual({
       input: 120,
       cached: 0,
+      cacheCreation: 0,
       output: 30,
     });
   });
@@ -449,9 +453,9 @@ describe('API-equivalent cost estimation', () => {
 
     expect(enriched.models[0].cost_usd).toBe(1.2375);
     expect(computeSpend(enriched, new Date(2026, 6, 11))).toMatchObject({
-      month_total_usd: 1.24,
+      month_total_usd: 1.2375,
       unpriced_models: [],
-      pricing_as_of: '2026-08-16',
+      pricing_as_of: '2026-09-23',
     });
   });
 
@@ -486,6 +490,77 @@ describe('API-equivalent cost estimation', () => {
     //      = 0.5 + 0.05 + 0.3 = 0.85
     expect(enriched.models[1].cost_usd).toBe(0.85);
     expect(computeSpend(enriched).unpriced_models).toEqual([]);
+  });
+
+  it('prices GPT-6 input, cached input, output and cache-write tokens', () => {
+    const usage: PeriodUsage = {
+      messages: 3,
+      tokens: 3_000_000,
+      models: [
+        {
+          model: 'gpt-6-luna',
+          input_tokens: 1_000_000,
+          cached_input_tokens: 400_000,
+          cache_creation_tokens: 100_000,
+          output_tokens: 200_000,
+          cost_usd: null,
+          percent_of_total: 33.3,
+        },
+        {
+          model: 'gpt-6-sol',
+          input_tokens: 1_000_000,
+          cached_input_tokens: 200_000,
+          cache_creation_tokens: 300_000,
+          output_tokens: 100_000,
+          cost_usd: null,
+          percent_of_total: 33.3,
+        },
+        {
+          model: 'gpt-6-astra',
+          input_tokens: 100_000,
+          cached_input_tokens: 20_000,
+          cache_creation_tokens: 10_000,
+          output_tokens: 10_000,
+          cost_usd: null,
+          percent_of_total: 33.4,
+        },
+      ],
+    };
+
+    const enriched = enrichWithCosts(usage);
+
+    expect(enriched.models.map(({ cost_usd }) => cost_usd)).toEqual([0.1665, 2.79, 1.345]);
+    expect(estimateModelCost(usage.models[0])).toEqual({
+      inputUsd: 0.05,
+      cachedInputUsd: 0.004,
+      cacheWriteUsd: 0.0125,
+      outputUsd: 0.1,
+      totalUsd: 0.1665,
+    });
+    expect(priceFor('gpt-6-luna-xhigh')?.id).toBe('gpt-6-luna');
+    expect(computeSpend(enriched).unpriced_models).toEqual([]);
+  });
+
+  it('keeps sub-cent estimates visible instead of rounding them to zero', () => {
+    const usage: PeriodUsage = {
+      messages: 1,
+      tokens: 2_000,
+      models: [{
+        model: 'gpt-6-luna',
+        input_tokens: 1_000,
+        cached_input_tokens: 250,
+        cache_creation_tokens: 100,
+        output_tokens: 1_000,
+        cost_usd: null,
+        percent_of_total: 100,
+      }],
+    };
+
+    const enriched = enrichWithCosts(usage);
+
+    expect(enriched.models[0].cost_usd).toBe(0.00058);
+    expect(formatUsdEstimate(enriched.models[0].cost_usd!)).toBe('$0.00058');
+    expect(formatUsdEstimate(0.0000001)).toBe('<$0.000001');
   });
 
   it('matches model suffixes and prefers the longest price id', () => {

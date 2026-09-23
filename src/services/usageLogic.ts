@@ -5,6 +5,7 @@ import type {
   ResetCredit,
   SpendInfo,
   UsageSnapshot,
+  UsageEvent,
   WindowUsage,
 } from '../types';
 
@@ -19,16 +20,9 @@ export const EMPTY_WINDOW: WindowUsage = {
   remaining_secs: 0,
 };
 
-export type ModelTokenMap = Map<string, { input: number; cached: number; output: number }>;
+export type ModelTokenMap = Map<string, { input: number; cached: number; cacheCreation: number; output: number }>;
 
-export interface TokenUsageEvent {
-  timestamp_unix: number;
-  model: string;
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
+export type TokenUsageEvent = UsageEvent;
 
 export interface ParsedRolloutFile {
   messages: number;
@@ -422,12 +416,13 @@ export function parseRolloutFile(content: string): ParsedRolloutFile {
         tokens += delta.total;
         const model = currentModel ?? 'codex';
         // token_count events omit model; use last turn_context / settings model.
-        addModelUsage(modelMap, model, delta.input, delta.cached, delta.output);
+        addModelUsage(modelMap, model, delta.input, delta.cached, delta.output, delta.cacheCreation);
         events.push({
           timestamp_unix: timestampUnix,
           model,
           input_tokens: delta.input,
           cached_input_tokens: delta.cached,
+          cache_creation_tokens: delta.cacheCreation,
           output_tokens: delta.output,
           total_tokens: delta.total,
         });
@@ -448,15 +443,20 @@ export function parseRolloutFile(content: string): ParsedRolloutFile {
         Number(usage.cached_input_tokens ?? usage.cachedInputTokens ?? promptDetails.cached_tokens ?? 0),
         input,
       );
+      const cacheCreation = Math.min(
+        nonNegativeNumber(usage.cache_write_input_tokens ?? usage.cache_creation_input_tokens ?? usage.cache_creation_tokens),
+        Math.max(0, input - cached),
+      );
       const output = Number(usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0);
       const total = Number(usage.total_tokens ?? usage.totalTokens ?? 0) || input + output;
       tokens += total;
-      addModelUsage(modelMap, String(model), input, cached, output);
+      addModelUsage(modelMap, String(model), input, cached, output, cacheCreation);
       events.push({
         timestamp_unix: timestampUnix,
         model: String(model),
         input_tokens: input,
         cached_input_tokens: cached,
+        cache_creation_tokens: cacheCreation,
         output_tokens: output,
         total_tokens: total,
       });
@@ -466,9 +466,38 @@ export function parseRolloutFile(content: string): ParsedRolloutFile {
   return { messages, tokens, modelMap, events, latestRateLimits };
 }
 
+/** Read only quota windows when the Rust engine already owns token events. */
+export function parseRolloutRateLimits(content: string): ParsedRolloutFile['latestRateLimits'] {
+  let latest: ParsedRolloutFile['latestRateLimits'] = null;
+  let start = 0;
+  while (start < content.length) {
+    const end = content.indexOf('\n', start);
+    const line = content.slice(start, end === -1 ? content.length : end);
+    start = end === -1 ? content.length : end + 1;
+    const entry = parseJson(line);
+    if (!entry) continue;
+    const entryRecord = record(entry);
+    const payload = record(entryRecord.payload);
+    if (payload.type !== 'token_count' || !payload.rate_limits) continue;
+    const timestampUnix = parseEventTimestamp(entryRecord.timestamp ?? payload.timestamp);
+    const rateLimits = record(payload.rate_limits);
+    const primary = parseLocalLimitWindow(rateLimits.primary, timestampUnix || undefined);
+    const secondary = parseLocalLimitWindow(rateLimits.secondary, timestampUnix || undefined);
+    if (primary || secondary) {
+      latest = {
+        timestamp_unix: timestampUnix,
+        primary: primary ?? { ...EMPTY_WINDOW },
+        secondary: secondary ?? { ...EMPTY_WINDOW },
+      };
+    }
+  }
+  return latest;
+}
+
 interface TokenCounters {
   input: number;
   cached: number;
+  cacheCreation: number;
   output: number;
   total: number;
 }
@@ -478,17 +507,25 @@ function tokenCounters(raw: unknown): TokenCounters | null {
   const usage = record(raw);
   const input = nonNegativeNumber(usage.input_tokens ?? usage.inputTokens);
   const cached = Math.min(nonNegativeNumber(usage.cached_input_tokens ?? usage.cachedInputTokens), input);
+  const cacheCreation = Math.min(
+    nonNegativeNumber(usage.cache_write_input_tokens ?? usage.cache_creation_input_tokens ?? usage.cache_creation_tokens),
+    Math.max(0, input - cached),
+  );
   const output = nonNegativeNumber(usage.output_tokens ?? usage.outputTokens);
   const total = Math.max(nonNegativeNumber(usage.total_tokens ?? usage.totalTokens), input + output);
-  return total > 0 ? { input, cached, output, total } : null;
+  return total > 0 ? { input, cached, cacheCreation, output, total } : null;
 }
 
 function subtractTokenCounters(current: TokenCounters, previous: TokenCounters): TokenCounters {
   const input = Math.max(0, current.input - previous.input);
   const cached = Math.min(input, Math.max(0, current.cached - previous.cached));
+  const cacheCreation = Math.min(
+    Math.max(0, input - cached),
+    Math.max(0, current.cacheCreation - previous.cacheCreation),
+  );
   const output = Math.max(0, current.output - previous.output);
   const total = Math.max(0, current.total - previous.total, input + output);
-  return { input, cached, output, total };
+  return { input, cached, cacheCreation, output, total };
 }
 
 function nonNegativeNumber(value: unknown): number {
@@ -598,6 +635,7 @@ export function buildPeriodUsage(messages: number, tokens: number, modelMap: Mod
       model,
       input_tokens: usage.input,
       cached_input_tokens: usage.cached,
+      cache_creation_tokens: usage.cacheCreation,
       output_tokens: usage.output,
       cost_usd: null,
       percent_of_total: ((usage.input + usage.output) / denominator) * 100,
@@ -606,28 +644,41 @@ export function buildPeriodUsage(messages: number, tokens: number, modelMap: Mod
   return { messages, tokens, models };
 }
 
-export function addModelUsage(modelMap: ModelTokenMap, model: string, input: number, cached: number, output: number) {
-  const current = modelMap.get(model) ?? { input: 0, cached: 0, output: 0 };
+export function addModelUsage(
+  modelMap: ModelTokenMap,
+  model: string,
+  input: number,
+  cached: number,
+  output: number,
+  cacheCreation = 0,
+) {
+  const current = modelMap.get(model) ?? { input: 0, cached: 0, cacheCreation: 0, output: 0 };
   current.input += input;
   current.cached += cached;
+  current.cacheCreation += cacheCreation;
   current.output += output;
   modelMap.set(model, current);
 }
 
 export function mergeModelMap(target: ModelTokenMap, source: ModelTokenMap) {
   for (const [model, usage] of source) {
-    addModelUsage(target, model, usage.input, usage.cached, usage.output);
+    addModelUsage(target, model, usage.input, usage.cached, usage.output, usage.cacheCreation);
   }
 }
 
-const PRICING_AS_OF = '2026-08-16';
+const PRICING_AS_OF = '2026-09-23';
 
 /**
  * Standard API-equivalent text-token prices in USD per 1M tokens.
+ * GPT-6 prices were supplied by the user on 2026-09-23.
  * Source: https://developers.openai.com/api/docs/pricing (standard short-context).
  * Keep longer / more specific ids first is not required — priceFor picks the longest match.
  */
-const PRICES: Array<{ id: string; input: number; cached: number; output: number }> = [
+const PRICES: Array<{ id: string; input: number; cached: number; output: number; cacheCreation?: number }> = [
+  // GPT-6 (input, cached input, output and cache-write prices)
+  { id: 'gpt-6-luna', input: 0.1, cached: 0.01, output: 0.5, cacheCreation: 0.125 },
+  { id: 'gpt-6-sol', input: 2, cached: 0.2, output: 10, cacheCreation: 2.5 },
+  { id: 'gpt-6-astra', input: 10, cached: 1, output: 50, cacheCreation: 12.5 },
   // GPT-5.6 family (current Codex defaults)
   { id: 'gpt-5.6-sol', input: 5, cached: 0.5, output: 30 },
   { id: 'gpt-5.6-terra', input: 2.5, cached: 0.25, output: 15 },
@@ -668,16 +719,57 @@ export function enrichWithCosts(usage: PeriodUsage): PeriodUsage {
   return {
     ...usage,
     models: usage.models.map((model) => {
-      const price = priceFor(model.model);
-      if (!price) return { ...model, cost_usd: null };
-      const cached = Math.min(model.cached_input_tokens, model.input_tokens);
-      const uncached = model.input_tokens - cached;
-      const cost = uncached * price.input / 1_000_000
-        + cached * price.cached / 1_000_000
-        + model.output_tokens * price.output / 1_000_000;
-      return { ...model, cost_usd: round(cost, 4) };
+      const estimate = estimateModelCost(model);
+      return { ...model, cost_usd: estimate ? round(estimate.totalUsd, 8) : null };
     }),
   };
+}
+
+export interface ModelCostEstimate {
+  inputUsd: number;
+  cachedInputUsd: number;
+  cacheWriteUsd: number;
+  outputUsd: number;
+  totalUsd: number;
+}
+
+/** Calculate each billable token class separately using USD per 1M token rates. */
+export function estimateModelCost(model: Pick<
+  ModelUsage,
+  'model' | 'input_tokens' | 'cached_input_tokens' | 'cache_creation_tokens' | 'output_tokens'
+>): ModelCostEstimate | null {
+  const price = priceFor(model.model);
+  if (!price) return null;
+  const input = Math.max(0, Number.isFinite(model.input_tokens) ? model.input_tokens : 0);
+  const cached = Math.min(input, Math.max(0, Number.isFinite(model.cached_input_tokens) ? model.cached_input_tokens : 0));
+  const cacheWrite = Math.min(
+    Math.max(0, Number.isFinite(model.cache_creation_tokens ?? 0) ? model.cache_creation_tokens ?? 0 : 0),
+    Math.max(0, input - cached),
+  );
+  const uncached = Math.max(0, input - cached - cacheWrite);
+  const inputUsd = uncached * price.input / 1_000_000;
+  const cachedInputUsd = cached * price.cached / 1_000_000;
+  const cacheWriteUsd = cacheWrite * (price.cacheCreation ?? price.input) / 1_000_000;
+  const outputUsd = Math.max(0, Number.isFinite(model.output_tokens) ? model.output_tokens : 0) * price.output / 1_000_000;
+  return {
+    inputUsd,
+    cachedInputUsd,
+    cacheWriteUsd,
+    outputUsd,
+    totalUsd: inputUsd + cachedInputUsd + cacheWriteUsd + outputUsd,
+  };
+}
+
+/** Keep small but non-zero API-equivalent estimates visible in the UI. */
+export function formatUsdEstimate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '$0.00';
+  if (value < 0.0000005) return '<$0.000001';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(value);
 }
 
 export function computeSpend(month: PeriodUsage, now = new Date()): SpendInfo {
@@ -686,9 +778,9 @@ export function computeSpend(month: PeriodUsage, now = new Date()): SpendInfo {
   const day = Math.max(now.getDate(), 1);
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return {
-    month_total_usd: round(total, 2),
-    avg_daily_usd: round(total / day, 2),
-    projected_usd: round((total / day) * daysInMonth, 2),
+    month_total_usd: round(total, 8),
+    avg_daily_usd: round(total / day, 8),
+    projected_usd: round((total / day) * daysInMonth, 8),
     unpriced_models: month.models.filter((model) => model.cost_usd === null).map((model) => model.model),
     pricing_as_of: PRICING_AS_OF,
   };

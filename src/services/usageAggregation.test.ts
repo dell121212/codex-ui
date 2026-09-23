@@ -42,6 +42,12 @@ describe('multi-provider usage aggregation', () => {
     });
   });
 
+  it('preserves sub-cent estimates for display', () => {
+    const estimate = summarizePeriodCost(period(2_000, 1, 'gpt-6-luna', 0.00058));
+
+    expect(estimate.usd).toBe(0.00058);
+  });
+
   it('uses the snapshot Codex period once and aggregates every provider', () => {
     const codex = period(1_000, 4, 'gpt-5', 5);
     const claude = period(2_000, 6, 'claude-sonnet', 3);

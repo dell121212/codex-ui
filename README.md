@@ -54,7 +54,7 @@ Review login state, local availability, monthly activity, and the source used fo
 
 ## Quick start
 
-Requirements: Linux, Node.js 20+, and a graphical session. Complete `codex login` first if you want Codex data.
+Requirements: Linux, Node.js 20+, pnpm 10+, Rust/Cargo (with Rust 2024 edition support), and a graphical session. Install Rust via rustup; the launcher finds Cargo on PATH or in `${CARGO_HOME:-$HOME/.cargo}/bin`. Complete `codex login` first if you want Codex data.
 
 ```bash
 git clone https://github.com/dell121212/codex-ui.git
@@ -67,16 +67,18 @@ The script installs dependencies, prepares Neutralino, checks local auth, builds
 ### Development checks
 
 ```bash
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 
-npm test
-npm run typecheck
-npm run build
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
 
 # Browser drag regression
-npm run dev
-npm run test:browser
+pnpm test:browser
+# Detects Chromium / Chrome / Edge; override with:
+# CHROMIUM_BIN=/path/to/chrome pnpm test:browser
 ```
 
 ### Build output

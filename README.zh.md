@@ -65,7 +65,7 @@
 
 ## 快速开始
 
-环境要求：Linux、Node.js 20+、图形会话。建议提前完成 `codex login`，其他 Provider 按需配置。
+环境要求：Linux、Node.js 20+、pnpm 10+、Rust/Cargo（支持 Rust 2024 edition）和图形会话。Rust 可通过 rustup 安装；启动脚本支持 Cargo 在 PATH 中或位于 `${CARGO_HOME:-$HOME/.cargo}/bin`。建议提前完成 `codex login`，其他 Provider 按需配置。
 
 ```bash
 git clone https://github.com/dell121212/codex-ui.git
@@ -78,17 +78,19 @@ cd codex-ui
 ### 开发与验证
 
 ```bash
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 
 # 单元测试、类型检查、生产构建
-npm test
-npm run typecheck
-npm run build
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
 
 # 浏览器拖拽回归
-npm run dev
-npm run test:browser
+pnpm test:browser
+# 自动检测 Chromium / Chrome / Edge，也可指定：
+# CHROMIUM_BIN=/path/to/chrome pnpm test:browser
 ```
 
 ### 构建产物

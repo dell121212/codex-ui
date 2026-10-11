@@ -1,30 +1,50 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const browserBin = process.env.CHROMIUM_BIN || [
+  'chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable',
+  'microsoft-edge', 'microsoft-edge-stable',
+].find((candidate) => spawnSync(candidate, ['--version'], { stdio: 'ignore' }).status === 0);
+if (!browserBin) {
+  throw new Error('No Chromium-based browser found. Set CHROMIUM_BIN to your browser executable.');
+}
+const browserProfile = mkdtempSync(join(tmpdir(), 'codex-ui-browser-regression-'));
 
 const devPort = 5174;
 const debugPort = 9333;
 const pageUrl = `http://127.0.0.1:${devPort}/?preview=dual&providers=codex`;
-const vite = spawn('pnpm', [
-  'dev',
+const vite = spawn(process.execPath, [
+  'node_modules/vite/bin/vite.js',
   '--host',
   '127.0.0.1',
   '--port',
   String(devPort),
 ], { stdio: 'ignore' });
 
-await waitForHttp(`http://127.0.0.1:${devPort}/`);
-
-const chromium = spawn('chromium', [
-  '--headless=new',
-  '--no-sandbox',
-  '--disable-gpu',
-  `--remote-debugging-port=${debugPort}`,
-  '--user-data-dir=/tmp/codex-ui-browser-regression',
-  '--window-size=940,720',
-  pageUrl,
-], { stdio: 'ignore' });
-
+let chromium;
 let socket;
+let launchError;
+vite.on('error', (error) => { launchError = error; });
+vite.on('exit', (code) => { launchError = new Error(`Vite exited before regression completion (${code}).`); });
 try {
+  await waitForHttp(`http://127.0.0.1:${devPort}/`);
+
+  chromium = spawn(browserBin, [
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-gpu',
+    `--remote-debugging-port=${debugPort}`,
+    `--user-data-dir=${browserProfile}`,
+    '--window-size=940,720',
+    pageUrl,
+  ], {
+    stdio: 'ignore',
+    env: { ...process.env, XDG_CONFIG_HOME: browserProfile },
+  });
+
+  chromium.on('error', (error) => { launchError = error; });
   const target = await waitForTarget();
   socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -493,8 +513,12 @@ try {
   });
 } finally {
   socket?.close();
-  chromium.kill('SIGTERM');
+  chromium?.kill('SIGTERM');
   vite.kill('SIGTERM');
+  if (chromium && chromium.exitCode === null && chromium.signalCode === null) {
+    await new Promise((resolve) => chromium.once('exit', resolve));
+  }
+  rmSync(browserProfile, { recursive: true, force: true });
 }
 
 async function collectVisibleOverflow(send) {
@@ -543,6 +567,7 @@ async function collectVisibleOverflow(send) {
 
 async function waitForTarget() {
   for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (launchError) throw launchError;
     try {
       const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
       const targets = await response.json();
@@ -558,6 +583,7 @@ async function waitForTarget() {
 
 async function waitForHttp(url) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (launchError) throw launchError;
     try {
       const response = await fetch(url);
       if (response.ok) return;

@@ -213,6 +213,7 @@ for arg in "$@"; do
   esac
 done
 ensure_node
+bash scripts/build-codex-engine.sh --check
 ensure_pnpm_deps
 ensure_neutralino_runtime
 ensure_icons

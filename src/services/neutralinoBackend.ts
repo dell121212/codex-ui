@@ -35,6 +35,7 @@ import {
 import { mergeStableLocalProviders } from './usageContinuity';
 import { parseCcusageBridgeResponse } from './ccusageBridge';
 import { readLocalTokenSubtotalCheckpoint } from './localTokenSubtotal';
+import { getHomePath } from './neutralinoPaths';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
@@ -327,7 +328,7 @@ async function applyAutostart(enabled: boolean): Promise<void> {
     throw new Error('开机自启当前仅支持 Linux。');
   }
 
-  const home = await api.os.getPath('home');
+  const home = await getHomePath(api.os);
   const autostartDir = `${home}/.config/autostart`;
   const desktopPath = `${autostartDir}/${AUTOSTART_ID}`;
 
@@ -444,7 +445,7 @@ async function fetchSnapshot(
 
   if (includeRemote) {
     // Codex + Grok + Mistral remotes in parallel (main wait after local scan).
-    const home = await nativeApi()?.os.getPath('home').catch(() => null);
+    const home = await getHomePath(nativeApi()?.os).catch(() => null);
     const [codexResult, enrichedProviders] = await Promise.all([
       fetchCodexRemoteQuota().then(
         (r) => ({ ok: true as const, ...r }),
@@ -550,7 +551,7 @@ async function captureLocalProvidersOnly(): Promise<ProviderLocalUsage[]> {
   const api = nativeApi();
   if (!api) return [];
   try {
-    const home = await api.os.getPath('home');
+    const home = await getHomePath(api.os);
     const fileApi = {
       readFile: (path: string) => api.filesystem.readFile(path),
       readDirectory: (path: string) => api.filesystem.readDirectory(path),
@@ -672,7 +673,7 @@ export async function queryCodexUsageEvents(from: Date, to: Date): Promise<impor
   const api = nativeApi();
   if (!api) return [];
   try {
-    const home = await api.os.getPath('home');
+    const home = await getHomePath(api.os);
     const result = await captureCodexEngine(api, home, { from, to });
     return result.engine === 'ccusage-rust' ? result.events : [];
   } catch {
@@ -799,7 +800,7 @@ async function fetchCodexBarQuota() {
     const available = await api.os.execCommand('command -v codexbar');
     const executable = available.stdOut.trim();
     if (available.exitCode !== 0 || !executable.startsWith('/')) return null;
-    const home = await api.os.getPath('home');
+    const home = await getHomePath(api.os);
     const result = await api.os.execCommand(
       `${shellQuote(executable)} usage --provider codex --format json`,
       { envs: { HOME: home } },
@@ -1139,7 +1140,7 @@ async function loadCodexAuth(): Promise<CodexAuthResult> {
 
   let path: string | undefined;
   try {
-    const home = await api.os.getPath('home');
+    const home = await getHomePath(api.os);
     path = `${home}/.codex/auth.json`;
     const raw = await api.filesystem.readFile(path);
     const parsed = JSON.parse(raw);

@@ -23,6 +23,7 @@
     "filesystem.getStats",
     "os.execCommand",
     "os.getPath",
+    "os.getEnv",
     "os.showNotification",
     "os.setTray",
     "storage.getData",

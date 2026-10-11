@@ -30,6 +30,7 @@ declare global {
     os: {
       execCommand: (command: string, options?: { background?: boolean; stdIn?: string; cwd?: string; envs?: Record<string, string> }) => Promise<{ pid: number; stdOut: string; stdErr: string; exitCode: number }>;
       getPath: (name: string) => Promise<string>;
+      getEnv: (key: string) => Promise<string>;
       showNotification: (title: string, content: string, icon?: 'INFO' | 'WARNING' | 'ERROR' | 'QUESTION') => Promise<void>;
       setTray: (options: { icon: string; menuItems: Array<{ id?: string; text: string; isDisabled?: boolean; isChecked?: boolean }>; useTemplateIcon?: boolean }) => Promise<void>;
     };

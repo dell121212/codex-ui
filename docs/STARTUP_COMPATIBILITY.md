@@ -21,6 +21,10 @@ The browser regression now detects installed Chromium, Chrome or Edge (or
 launch errors and cleans up its browser and Vite processes. This also fixes the
 reproduced `spawn chromium ENOENT` failure on machines with Edge installed.
 
+GPT model API-equivalent token rates are checked at startup and then once every
+24 hours from LiteLLM's shared price catalog. Valid rates are cached in
+Neutralino storage. Offline runs retain the cached rates and the built-in table.
+
 Validation: Bash syntax and toolchain preflight; TypeScript, lint and production
 build; 83 frontend tests; 5 existing Rust bridge tests; browser drag/persistence,
 page navigation and layout regression; packaged Linux desktop startup with real

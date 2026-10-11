@@ -36,6 +36,7 @@ import { mergeStableLocalProviders } from './usageContinuity';
 import { parseCcusageBridgeResponse } from './ccusageBridge';
 import { readLocalTokenSubtotalCheckpoint } from './localTokenSubtotal';
 import { getHomePath } from './neutralinoPaths';
+import { refreshModelPricing, MODEL_PRICING_REFRESH_MS } from './modelPricing';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
@@ -67,6 +68,7 @@ let cached: { snapshot: UsageSnapshot; at: number } | null = null;
 let refreshInFlight: Promise<UsageSnapshot> | null = null;
 let quotaAlertActive = false;
 let refreshTimer: number | null = null;
+let pricingRefreshTimer: number | null = null;
 let codexEngineQueue: Promise<void> = Promise.resolve();
 const listeners = new Set<(snapshot: UsageSnapshot) => void>();
 
@@ -178,6 +180,20 @@ export function initNeutralinoBackend() {
     if (cached) publishSnapshot(cached.snapshot);
   });
   void scheduleRefresh();
+  void updatePricingAndUsage(api.storage);
+  if (pricingRefreshTimer !== null) window.clearInterval(pricingRefreshTimer);
+  pricingRefreshTimer = window.setInterval(() => {
+    void updatePricingAndUsage(api.storage);
+  }, MODEL_PRICING_REFRESH_MS);
+}
+
+async function updatePricingAndUsage(storage: NeutralinoApi['storage']): Promise<void> {
+  const updated = await refreshModelPricing(storage);
+  if (!updated) return;
+  // Let any usage scan already in progress finish with the old table, then
+  // recalculate once using the new rates.
+  if (refreshInFlight) await refreshInFlight;
+  await refreshUsage();
 }
 
 export function onUsageUpdated(listener: (snapshot: UsageSnapshot) => void): () => void {

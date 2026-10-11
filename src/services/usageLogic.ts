@@ -666,7 +666,7 @@ export function mergeModelMap(target: ModelTokenMap, source: ModelTokenMap) {
   }
 }
 
-const PRICING_AS_OF = '2026-09-23';
+const BUILTIN_PRICING_AS_OF = '2026-09-23';
 
 /**
  * Standard API-equivalent text-token prices in USD per 1M tokens.
@@ -714,6 +714,28 @@ const PRICES: Array<{ id: string; input: number; cached: number; output: number;
   { id: 'gpt-4.1-mini', input: 0.4, cached: 0.1, output: 1.6 },
   { id: 'gpt-4.1', input: 2, cached: 0.5, output: 8 },
 ];
+
+export interface ModelPrice {
+  id: string;
+  input: number;
+  cached: number;
+  output: number;
+  cacheCreation?: number;
+}
+
+let refreshedPrices: ModelPrice[] = [];
+let refreshedPricingAsOf: string | null = null;
+
+/** Install validated prices fetched from the shared LiteLLM catalog. */
+export function installModelPrices(prices: ModelPrice[], asOf: string): void {
+  if (!prices.length || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return;
+  refreshedPrices = prices;
+  refreshedPricingAsOf = asOf;
+}
+
+export function pricingAsOf(): string {
+  return refreshedPricingAsOf ?? BUILTIN_PRICING_AS_OF;
+}
 
 export function enrichWithCosts(usage: PeriodUsage): PeriodUsage {
   return {
@@ -782,7 +804,7 @@ export function computeSpend(month: PeriodUsage, now = new Date()): SpendInfo {
     avg_daily_usd: round(total / day, 8),
     projected_usd: round((total / day) * daysInMonth, 8),
     unpriced_models: month.models.filter((model) => model.cost_usd === null).map((model) => model.model),
-    pricing_as_of: PRICING_AS_OF,
+    pricing_as_of: pricingAsOf(),
   };
 }
 
@@ -795,8 +817,9 @@ export function priceFor(model: string) {
   const normalized = model.toLowerCase().trim();
   if (!normalized) return null;
 
-  let best: (typeof PRICES)[number] | null = null;
-  for (const price of PRICES) {
+  let best: ModelPrice | null = null;
+  const prices = [...PRICES, ...refreshedPrices];
+  for (const price of prices) {
     const id = price.id;
     if (normalized === id || normalized.startsWith(`${id}-`)) {
       if (!best || id.length > best.id.length) best = price;

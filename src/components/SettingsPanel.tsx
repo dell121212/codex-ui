@@ -24,11 +24,14 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
   const [cfg, setCfg] = useState<Settings>({
     refresh_interval_secs: 60,
     autostart: false,
+    start_hidden: true,
     notify_at_90_pct: true,
   });
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
@@ -41,17 +44,32 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
       // local auth status. Refresh that snapshot as part of rechecking auth so
       // a successful login clears a stale COOKIE_EXPIRED/NO_AUTH error.
       await refresh();
+    } catch (error) {
+      setAuthStatus({ source: 'none', message: `登录态检测失败：${String(error)}` });
     } finally {
       setCheckingAuth(false);
     }
   }, [getAuthStatus, refresh]);
 
   useEffect(() => {
-    loadSettings().then(setCfg);
+    let active = true;
+    setLoadingSettings(true);
+    setSettingsLoaded(false);
+    loadSettings().then(settings => {
+      if (!active) return;
+      setCfg(settings);
+      setSettingsLoaded(true);
+    }).catch(error => {
+      if (active) setSaveError(`设置加载失败：${String(error)}`);
+    }).finally(() => {
+      if (active) setLoadingSettings(false);
+    });
     void refreshAuthStatus();
+    return () => { active = false; };
   }, [loadSettings, refreshAuthStatus]);
 
   const handleSave = async () => {
+    if (!settingsLoaded || loadingSettings || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -66,6 +84,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
   };
 
   const authOk = authStatus?.source === 'codex';
+  const settingsDisabled = !settingsLoaded || loadingSettings || saving;
 
   return (
     <div className={`settings-panel${embedded ? ' settings-panel--embedded' : ''}`}>
@@ -120,6 +139,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
           <ToggleGroup
             className="seg-ctrl"
             aria-label="刷新间隔"
+            disabled={settingsDisabled}
             value={[String(cfg.refresh_interval_secs)]}
             onValueChange={(values) => {
               const next = Number(values[0]);
@@ -145,14 +165,31 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
           <div className="settings-row">
             <div>
               <div className="settings-row-label">开机自启</div>
-              <div className="settings-row-sub">登录后启动</div>
+              <div className="settings-row-sub">登录桌面后静默启动到托盘</div>
             </div>
             <Switch
               size="md"
               checked={cfg.autostart}
+              disabled={settingsDisabled}
               onCheckedChange={v => setCfg(c => ({ ...c, autostart: v }))}
               aria-label="开机自启"
             />
+          </div>
+          <div className="settings-row" style={{ marginTop: 10 }}>
+            <div>
+              <div className="settings-row-label">启动后静默运行</div>
+              <div className="settings-row-sub">不弹出主窗口，从托盘打开；下次启动生效</div>
+            </div>
+            <Switch
+              size="md"
+              checked={cfg.start_hidden}
+              disabled={settingsDisabled}
+              onCheckedChange={v => setCfg(c => ({ ...c, start_hidden: v }))}
+              aria-label="启动后静默运行"
+            />
+          </div>
+          <div className="settings-hint">
+            关闭窗口后仍在后台刷新；完全退出请使用托盘菜单的“退出”。
           </div>
           <div className="settings-row" style={{ marginTop: 10 }}>
             <div>
@@ -162,6 +199,7 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
             <Switch
               size="md"
               checked={cfg.notify_at_90_pct}
+              disabled={settingsDisabled}
               onCheckedChange={v => setCfg(c => ({ ...c, notify_at_90_pct: v }))}
               aria-label="用量提醒"
             />
@@ -183,8 +221,8 @@ export default function SettingsPanel({ onClose, embedded = false }: Props) {
       {/* Footer */}
       <div className="settings-footer">
         {!embedded && <Button className="btn-secondary" variant="outline" onClick={onClose}>取消</Button>}
-        <Button className="btn-save" variant="primary" onClick={handleSave} disabled={saving}>
-          {saving ? '保存中…' : '保存'}
+        <Button className="btn-save" variant="primary" onClick={handleSave} disabled={settingsDisabled}>
+          {loadingSettings ? '加载设置中…' : saving ? '保存中…' : '保存'}
         </Button>
       </div>
     </div>

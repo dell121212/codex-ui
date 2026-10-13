@@ -47,3 +47,13 @@
 - Target: [`src/services/codexBarQuota.ts`](../src/services/codexBarQuota.ts) maps actual CodexBar rate windows; [`neutralinoBackend.ts`](../src/services/neutralinoBackend.ts) calls `codexbar usage --provider codex --format json` only as a last fallback after the existing official transports fail. It does not install or launch CodexBar when it is absent.
 - CodexBar reports used percentage, duration and reset time, not token counts; the adapter keeps that distinction and does not invent token limits. Synthetic and missing windows are ignored. The native OpenAI quota endpoint remains primary.
 - The CodexBar SwiftUI/Qt interface and its independent cost scanner are not included. The platform-neutral quota payload is the selected capability; ccusage remains the only Codex log/cost engine.
+
+### Neutralino 桌面生命周期与 Linux 自启动适配（2026-10-13）
+
+- 直接复用已锁定 [Neutralino core v6.5.0](https://github.com/neutralinojs/neutralinojs/tree/v6.5.0) 与 client 6.8.0；MIT，核对 core 根 LICENSE 及窗口、OS、文件 API 源文件，无额外文件级版权声明。未复制新增上游代码、测试或素材；不变更现有运行时分发边界。
+- 审阅路径：`api/window/window.cpp`（hidden/windowClose）、`api/os/os.cpp`（setTray/trayMenuItemClicked）、`api/fs/fs.cpp`（remove/createDirectory/getStats）；以 v6.5.0 tag 为版本记录，GitHub API 本轮限流，未取得新的 commit SHA，不编造。
+- 接口约束来自 [官方配置](https://neutralino.js.org/docs/configuration/neutralino.config.json/)、[Window API](https://neutralino.js.org/docs/api/window/)、[Filesystem API](https://neutralino.js.org/docs/api/filesystem/)、[freedesktop Autostart](https://specifications.freedesktop.org/autostart/latest/) 和 [Desktop Entry Exec](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html)。使用规范，不复制规范文字或引入第三方自启动进程。
+- 实现：`src/services/desktopLifecycle.ts`、`src/services/linuxAutostart.ts`、`neutralinoBackend.ts`、`SettingsPanel.tsx`、`neutralino.config.json`、`run.sh`。后台启动不执行构建、安装或登录流程；用户登录桌面后由系统启动发布版二进制。启动偏好、Provider 数据、统一刷新和 storage 保持同一应用边界。
+- 测试与更新责任：本项目 `desktopLifecycle.test.ts` 检查真实 API 名、权限、旧设置迁移、启动覆盖、托盘恢复/关闭/退出、失败回退、XDG/Exec、保存回滚；未移植上游测试。维护者升级 Neutralino 时应同时复核 nativeAllowList、客户端方法名和 Linux 托盘事件，重跑桌面兼容验证。详细边界见 [DESKTOP_BACKGROUND_CONTRACT.md](DESKTOP_BACKGROUND_CONTRACT.md)。
+
+窗口恢复补充核验：6.5.0 `api/window/window.cpp` 的 show 只更新 GTK widget，isVisible 返回 GTK visible 标记；它们不保证 GNOME 实际窗口已经映射。窗口初始化 native hidden=true 的失效已由系统 X11 状态复现，修复采用已有 API 和 renderer 初始化隐藏，复用 `window.unminimize` 恢复最小化，不升级运行时、不引入外部激活工具。新增真实 AppIndicator/D-Bus 点击与 X11 映射回归位于 `tests/desktop_startup_regression.mjs`；维护责任与先前适配相同。

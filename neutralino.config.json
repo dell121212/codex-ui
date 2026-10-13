@@ -17,7 +17,7 @@
     "events.*",
     "filesystem.readFile",
     "filesystem.writeFile",
-    "filesystem.removeFile",
+    "filesystem.remove",
     "filesystem.createDirectory",
     "filesystem.readDirectory",
     "filesystem.getStats",
@@ -29,6 +29,8 @@
     "storage.getData",
     "storage.setData",
     "window.focus",
+    "window.unminimize",
+    "window.hide",
     "window.show"
   ],
   "modes": {
@@ -41,7 +43,8 @@
       "resizable": true,
       "alwaysOnTop": true,
       "skipTaskbar": false,
-      "exitProcessOnClose": true,
+      "hidden": false,
+      "exitProcessOnClose": false,
       "injectClientLibrary": true,
       "icon": "public/icons/app.png"
     }

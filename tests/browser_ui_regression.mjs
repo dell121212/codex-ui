@@ -71,6 +71,7 @@ try {
   });
 
   await send('Runtime.enable');
+  await send('Emulation.setDeviceMetricsOverride', { width: 940, height: 720, deviceScaleFactor: 1, mobile: false });
   await waitForExpression(send, 'document.readyState === "complete" && document.querySelectorAll(".provider-palette-item").length >= 6');
   await evaluate(send, `(() => {
     localStorage.removeItem('codex-ui-dashboard-providers-v1');
@@ -301,7 +302,8 @@ try {
   if (narrowOverflows.length) {
     throw new Error(`Narrow visible-text overflow: ${JSON.stringify(narrowOverflows)}`);
   }
-  await send('Emulation.clearDeviceMetricsOverride');
+  await send('Emulation.setDeviceMetricsOverride', { width: 940, height: 720, deviceScaleFactor: 1, mobile: false });
+  await waitForExpression(send, 'window.innerWidth === 940');
 
   const geometry = await evaluate(send, `(() => {
     const source = [...document.querySelectorAll('.provider-palette-item')]
@@ -339,6 +341,9 @@ try {
       button: 'left',
       buttons: 1,
     });
+    if (step === 1) {
+      await waitForExpression(send, 'Boolean(document.querySelector(".provider-drag-preview"))');
+    }
   }
   await send('Input.dispatchMouseEvent', {
     type: 'mouseReleased',
@@ -349,7 +354,7 @@ try {
     clickCount: 1,
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitForExpression(send, 'document.querySelectorAll(".sortable-provider-card").length === 2');
   const result = await evaluate(send, `(() => {
     const sizeOf = (node) => {
       const rect = node.getBoundingClientRect();
@@ -498,6 +503,52 @@ try {
     || analyticsOverflows.length
   ) {
     throw new Error(`Event analysis empty-state regression failed: ${JSON.stringify({ eventAnalysis, analyticsOverflows })}`);
+  }
+
+  await evaluate(send, `(() => {
+    document.querySelector('.app-toolbar-settings-row')?.click();
+  })()`);
+  await waitForExpression(send, `Boolean(document.querySelector('[aria-label="启动后静默运行"]'))`);
+  const desktopSettings = await evaluate(send, `(() => ({
+    hidden: document.querySelector('[aria-label="启动后静默运行"]')?.getAttribute('aria-checked'),
+    autostart: document.querySelector('[aria-label="开机自启"]')?.getAttribute('aria-checked'),
+    description: document.querySelector('.settings-panel')?.textContent ?? '',
+  }))()`);
+  if (desktopSettings.hidden !== 'true' || desktopSettings.autostart !== 'false'
+      || !desktopSettings.description.includes('登录桌面后静默启动到托盘')) {
+    throw new Error(`Desktop settings defaults failed: ${JSON.stringify(desktopSettings)}`);
+  }
+  await evaluate(send, `document.querySelector('[aria-label="启动后静默运行"]')?.click()`);
+  await waitForExpression(send, `document.querySelector('[aria-label="启动后静默运行"]')?.getAttribute('aria-checked') === 'false'`);
+  await evaluate(send, `document.querySelector('[aria-label="开机自启"]')?.click()`);
+  await waitForExpression(send, `document.querySelector('[aria-label="开机自启"]')?.getAttribute('aria-checked') === 'true'`);
+
+  await evaluate(send, `document.querySelector('.app-toolbar-nav-item')?.click()`);
+  await waitForExpression(send, '!document.querySelector(".settings-panel")');
+  await evaluate(send, `(async () => {
+    const { useStore } = await import('/src/store/usageStore.ts');
+    window.__settingsProbe = { saves: [] };
+    useStore.setState({
+      loadSettings: () => new Promise(resolve => { window.__settingsProbe.resolve = resolve; }),
+      saveSettings: async cfg => { window.__settingsProbe.saves.push(cfg); },
+    });
+    document.querySelector('.app-toolbar-settings-row')?.click();
+  })()`);
+  await waitForExpression(send, 'Boolean(document.querySelector(".btn-save"))');
+  const saveWhileLoading = await evaluate(send, `(() => {
+    const save = document.querySelector('.btn-save');
+    const disabled = save.disabled;
+    save.click();
+    return disabled;
+  })()`);
+  if (!saveWhileLoading) throw new Error('Settings can be saved before existing preferences are loaded');
+  await evaluate(send, `window.__settingsProbe.resolve({ refresh_interval_secs: 120, autostart: true, start_hidden: false, notify_at_90_pct: false })`);
+  await waitForExpression(send, `document.querySelector('.btn-save')?.disabled === false && document.querySelector('[aria-label="启动后静默运行"]')?.getAttribute('aria-checked') === 'false'`);
+  await evaluate(send, `document.querySelector('.btn-save')?.click()`);
+  await waitForExpression(send, 'window.__settingsProbe.saves.length === 1');
+  const savedSettings = await evaluate(send, 'window.__settingsProbe.saves[0]');
+  if (savedSettings.refresh_interval_secs !== 120 || !savedSettings.autostart || savedSettings.start_hidden || savedSettings.notify_at_90_pct) {
+    throw new Error(`Loaded settings were overwritten: ${JSON.stringify(savedSettings)}`);
   }
 
   console.log('Browser drag regression passed:', {

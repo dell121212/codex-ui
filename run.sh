@@ -3,6 +3,9 @@
 #
 # Usage:
 #   ./run.sh             Install, build, and start the app
+#   ./run.sh --background  Build and start silently in the tray
+#   ./run.sh --show        Build and open the window
+#   ./run.sh --build       Build without launching or logging in
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -24,6 +27,8 @@ cd "$ROOT_DIR"
 
 APP_BIN="$ROOT_DIR/neutralino-dist/codex-ui/bin/neutralino-linux_x64"
 SETUP_TRAY=false
+BUILD_ONLY=false
+LAUNCH_ARGS=()
 
 has_codex_auth() {
   node -e '
@@ -199,17 +204,25 @@ build_app() {
 }
 
 run_app() {
-  clear_old_app_processes
+  if [[ "$BUILD_ONLY" != true ]]; then clear_old_app_processes; fi
   build_app
+  if [[ "$BUILD_ONLY" == true ]]; then return; fi
   log "启动应用..."
-  "$APP_BIN"
+  if [[ " ${LAUNCH_ARGS[*]} " == *" --background "* ]]; then
+    nohup "$APP_BIN" "${LAUNCH_ARGS[@]}" >"$ROOT_DIR/neutralino-dist/codex-ui/startup.log" 2>&1 < /dev/null &
+    ok "已启动后台进程；从托盘菜单打开窗口。"
+  else
+    "$APP_BIN" "${LAUNCH_ARGS[@]}"
+  fi
 }
 
 print_header
 for arg in "$@"; do
   case "$arg" in
     --setup-tray) SETUP_TRAY=true ;;
-    *) err "未知参数：$arg。支持的参数：--setup-tray" ;;
+    --build) BUILD_ONLY=true ;;
+    --background|--show) LAUNCH_ARGS+=("$arg") ;;
+    *) err "未知参数：$arg。支持的参数：--setup-tray、--build、--background、--show" ;;
   esac
 done
 ensure_node
@@ -218,5 +231,7 @@ ensure_pnpm_deps
 ensure_neutralino_runtime
 ensure_icons
 ensure_tray_support
-ensure_codex_login
+if [[ "$BUILD_ONLY" != true && " ${LAUNCH_ARGS[*]} " != *" --background "* ]]; then
+  ensure_codex_login
+fi
 run_app

@@ -36,6 +36,8 @@ import { mergeStableLocalProviders } from './usageContinuity';
 import { parseCcusageBridgeResponse } from './ccusageBridge';
 import { readLocalTokenSubtotalCheckpoint } from './localTokenSubtotal';
 import { getHomePath } from './neutralinoPaths';
+import { initDesktopLifecycle } from './desktopLifecycle';
+import { applyLinuxAutostart } from './linuxAutostart';
 import { refreshModelPricing, MODEL_PRICING_REFRESH_MS } from './modelPricing';
 
 const SETTINGS_KEY = 'settings';
@@ -49,11 +51,11 @@ const MISTRAL_VIBE_WHOAMI_URL = 'https://chat.mistral.ai/api/vibe/whoami';
 const MISTRAL_CHAT_URL = 'https://api.mistral.ai/v1/chat/completions';
 const MISTRAL_ADMIN_SPEND_URL = 'https://console.mistral.ai/api/admin/spend-limit';
 const MISTRAL_ADMIN_RATE_URL = 'https://console.mistral.ai/api/admin/rate-limit';
-const AUTOSTART_ID = 'codex-ui.desktop';
 
 const DEFAULT_SETTINGS: Settings = {
   refresh_interval_secs: 60,
   autostart: false,
+  start_hidden: true,
   notify_at_90_pct: true,
 };
 
@@ -153,28 +155,15 @@ export function initNeutralinoBackend() {
     // Neutralino throws if initialized twice.
   }
 
-  api.events.on('trayMenuItemClicked', (event) => {
-    const detail = record(event.detail);
-    if (detail.id === 'quit') {
-      void quitApp();
-    }
-    if (detail.id === 'refresh') {
+  void initDesktopLifecycle(api, loadSettings, () => configureTray(0, 0, '额度'), (force) => {
+    if (force || !cached || !isCacheFresh(cached.at) || !hasEventSlice(cached.snapshot)) {
       void refreshUsage();
     }
-  });
-
-  api.events.on('trayIconClicked', () => {
+  }, typeof NL_ARGS !== 'undefined' ? NL_ARGS ?? [] : []).catch(error => {
+    console.error('Desktop initialization failed', error);
+    // Do not strand a hidden app if host initialization fails.
     void api.window.show();
-    void api.window.focus();
-    // Don't force a full network round-trip when cache is still fresh.
-    if (!cached || !isCacheFresh(cached.at) || !hasEventSlice(cached.snapshot)) {
-      void refreshUsage();
-    }
   });
-
-  void api.window.show();
-  void api.window.focus();
-  void configureTray(0, 0, '额度');
   // Warm disk cache into memory as early as possible (non-blocking).
   void ensureMemoryCache().then(() => {
     if (cached) publishSnapshot(cached.snapshot);
@@ -312,6 +301,7 @@ export async function loadSettings(): Promise<Settings> {
       ...parsed,
       refresh_interval_secs: clamp(Number(parsed.refresh_interval_secs ?? 60), 30, 300),
       autostart: !!parsed.autostart,
+      start_hidden: typeof parsed.start_hidden === 'boolean' ? parsed.start_hidden : true,
       notify_at_90_pct: parsed.notify_at_90_pct ?? true,
     };
   } catch {
@@ -323,66 +313,33 @@ export async function saveSettings(settings: Settings): Promise<void> {
   const normalized: Settings = {
     refresh_interval_secs: clamp(Number(settings.refresh_interval_secs), 30, 300),
     autostart: !!settings.autostart,
+    start_hidden: !!settings.start_hidden,
     notify_at_90_pct: !!settings.notify_at_90_pct,
   };
 
   const api = nativeApi();
 
   if (api) {
-    await applyAutostart(normalized.autostart);
-    await api.storage.setData(SETTINGS_KEY, JSON.stringify(normalized));
+    if (typeof NL_OS !== 'undefined' && NL_OS !== 'Linux' && normalized.autostart) {
+      throw new Error('开机自启当前仅支持 Linux。');
+    }
+    const undo = typeof NL_OS === 'undefined' || NL_OS === 'Linux'
+      ? await applyLinuxAutostart(api, normalized.autostart, currentExecutablePath)
+      : async () => {};
+    try {
+      await api.storage.setData(SETTINGS_KEY, JSON.stringify(normalized));
+    } catch (error) {
+      try {
+        await undo();
+      } catch (rollbackError) {
+        throw new Error(`设置保存失败：${String(error)}；自启动恢复失败：${String(rollbackError)}`);
+      }
+      throw error;
+    }
   }
 
   cached = null;
   await scheduleRefresh();
-}
-
-async function applyAutostart(enabled: boolean): Promise<void> {
-  const api = nativeApi();
-  if (!api) return;
-  if (typeof NL_OS !== 'undefined' && NL_OS !== 'Linux') {
-    throw new Error('开机自启当前仅支持 Linux。');
-  }
-
-  const home = await getHomePath(api.os);
-  const autostartDir = `${home}/.config/autostart`;
-  const desktopPath = `${autostartDir}/${AUTOSTART_ID}`;
-
-  if (!enabled) {
-    try {
-      await api.filesystem.removeFile(desktopPath);
-    } catch {
-      // Missing autostart entries are already disabled.
-    }
-    return;
-  }
-
-  const executable = await currentExecutablePath();
-  if (!executable.includes('/neutralino-dist/')) {
-    throw new Error('请先运行 ./run.sh --build，并在发布版中开启开机自启。');
-  }
-
-  try {
-    await api.filesystem.createDirectory(`${home}/.config`);
-  } catch {
-    // Directory already exists or cannot be created; the next write reports real failures.
-  }
-  try {
-    await api.filesystem.createDirectory(autostartDir);
-  } catch {
-    // Directory already exists or cannot be created; the next write reports real failures.
-  }
-
-  await api.filesystem.writeFile(desktopPath, [
-    '[Desktop Entry]',
-    'Type=Application',
-    'Name=codex-ui',
-    'Comment=Codex usage dashboard',
-    `Exec=${desktopExecQuote(executable)}`,
-    'Terminal=false',
-    'X-GNOME-Autostart-enabled=true',
-    '',
-  ].join('\n'));
 }
 
 async function currentExecutablePath(): Promise<string> {
@@ -1119,21 +1076,25 @@ async function afterSnapshot(snapshot: UsageSnapshot) {
   }
 }
 
-async function configureTray(percent: number, resets: number, label: string) {
+async function configureTray(percent: number, resets: number, label: string): Promise<boolean> {
   const api = nativeApi();
-  if (!api) return;
+  if (!api) return false;
   try {
     await api.os.setTray({
       icon: '/icons/tray.png',
       menuItems: [
+        { id: 'show', text: '显示窗口' },
+        { id: 'hide', text: '隐藏到托盘' },
         { id: 'status', text: `${label} ${percent.toFixed(0)}% · reset ${resets}`, isDisabled: true },
         { id: 'refresh', text: '刷新' },
         { text: '-' },
         { id: 'quit', text: '退出' },
       ],
     });
+    return true;
   } catch (e) {
     console.warn('Tray setup failed; continuing with normal window mode.', e);
+    return false;
   }
 }
 
@@ -1475,7 +1436,7 @@ async function writeTempScript(prefix: string, content: string, ext = '.js'): Pr
 
 async function safeRemove(path: string): Promise<void> {
   try {
-    await nativeApi()?.filesystem.removeFile(path);
+    await nativeApi()?.filesystem.remove(path);
   } catch {
     // best-effort cleanup
   }
@@ -1540,10 +1501,6 @@ function createIdempotencyKey(): string {
   } catch {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
-}
-
-function desktopExecQuote(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`;
 }
 
 function shellQuote(value: string): string {

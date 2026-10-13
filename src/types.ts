@@ -187,6 +187,7 @@ export interface UsageSnapshot {
 export interface Settings {
   refresh_interval_secs: number;
   autostart: boolean;
+  start_hidden: boolean;
   notify_at_90_pct: boolean;
 }
 

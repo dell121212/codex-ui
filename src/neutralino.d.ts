@@ -3,6 +3,7 @@ export {};
 declare global {
   const NL_PATH: string | undefined;
   const NL_OS: string | undefined;
+  const NL_ARGS: string[] | undefined;
 
   interface Window {
     Neutralino?: NeutralinoApi;
@@ -22,7 +23,7 @@ declare global {
     filesystem: {
       readFile: (filename: string, options?: { pos?: number; size?: number }) => Promise<string>;
       writeFile: (filename: string, data: string) => Promise<void>;
-      removeFile: (filename: string) => Promise<void>;
+      remove: (filename: string) => Promise<void>;
       createDirectory: (path: string) => Promise<void>;
       readDirectory: (path: string, options?: { recursive?: boolean }) => Promise<Array<{ entry: string; type: 'FILE' | 'DIRECTORY' }>>;
       getStats: (path: string) => Promise<{ size: number; isFile: boolean; isDirectory: boolean; createdAt: number; modifiedAt: number }>;
@@ -43,6 +44,7 @@ declare global {
     window: {
       hide: () => Promise<void>;
       minimize: () => Promise<void>;
+      unminimize: () => Promise<void>;
       show: () => Promise<void>;
       focus: () => Promise<void>;
       setAlwaysOnTop?: (enabled: boolean) => Promise<void>;

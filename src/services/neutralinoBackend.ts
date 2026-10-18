@@ -39,6 +39,7 @@ import { getHomePath } from './neutralinoPaths';
 import { initDesktopLifecycle } from './desktopLifecycle';
 import { applyLinuxAutostart } from './linuxAutostart';
 import { refreshModelPricing, MODEL_PRICING_REFRESH_MS } from './modelPricing';
+import desktopResources from '../desktop-resources.json';
 
 const SETTINGS_KEY = 'settings';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/api/codex/usage';
@@ -1076,12 +1077,16 @@ async function afterSnapshot(snapshot: UsageSnapshot) {
   }
 }
 
-async function configureTray(percent: number, resets: number, label: string): Promise<boolean> {
+export async function configureTray(percent: number, resets: number, label: string): Promise<boolean> {
   const api = nativeApi();
   if (!api) return false;
   try {
+    const icon = desktopResources.trayIcon;
+    // setTray can succeed even when native icon extraction fails.
+    const stats = await api.resources.getStats(icon);
+    if (!stats.isFile || stats.size <= 0) throw new Error(`Tray resource is missing or empty: ${icon}`);
     await api.os.setTray({
-      icon: '/icons/tray.png',
+      icon,
       menuItems: [
         { id: 'show', text: '显示窗口' },
         { id: 'hide', text: '隐藏到托盘' },

@@ -13,6 +13,9 @@ declare global {
 
   interface NeutralinoApi {
     init: () => void;
+    resources: {
+      getStats: (path: string) => Promise<{ size: number; isFile: boolean; isDirectory: boolean }>;
+    };
     app: {
       exit: () => Promise<void>;
     };

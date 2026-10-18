@@ -8,24 +8,27 @@ import { join, resolve } from 'node:path';
 // Requires a graphical Linux session and the installed AppIndicator library.
 const requireFromVite = createRequire(import.meta.resolve('vite'));
 const { build } = requireFromVite('esbuild');
+const requireFromNeu = createRequire(import.meta.resolve('@neutralinojs/neu'));
+const { createPackage } = requireFromNeu('@electron/asar');
 const root = resolve('.');
 const binary = join(root, 'neutralino-dist/codex-ui/bin/neutralino-linux_x64');
 const temporary = await mkdtemp(join(tmpdir(), 'codex-ui-desktop-test-'));
+const resources = join(temporary, 'resources');
 let child;
 try {
-  await mkdir(join(temporary, 'dist'));
-  await mkdir(join(temporary, 'icons'));
-  await copyFile(join(root, 'neutralino.js'), join(temporary, 'neutralino.js'));
-  await copyFile(join(root, 'public/icons/tray.png'), join(temporary, 'icons/tray.png'));
+  await mkdir(join(resources, 'dist/icons'), { recursive: true });
+  await copyFile(join(root, 'neutralino.js'), join(resources, 'neutralino.js'));
+  await copyFile(join(root, 'public/icons/tray.png'), join(resources, 'dist/icons/tray.png'));
   const config = JSON.parse(await readFile(join(root, 'neutralino.config.json'), 'utf8'));
   config.applicationId = 'com.codex.ui.desktop.regression';
   config.storageLocation = 'app';
   config.dataLocation = 'app';
   config.nativeAllowList.push('window.isVisible', 'window.minimize', 'window.isMinimized');
-  config.modes.window.icon = 'icons/tray.png';
-  config.modes.window.alwaysOnTop = false;
-  await writeFile(join(temporary, 'neutralino.config.json'), JSON.stringify(config));
-  await writeFile(join(temporary, 'click-tray.py'), `from gi.repository import Gio, GLib
+  config.modes.window.icon = '/dist/icons/tray.png';
+  await writeFile(join(resources, 'neutralino.config.json'), JSON.stringify(config));
+  await writeFile(join(temporary, 'click-tray.py'), `import gi
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import Gio, GLib, GdkPixbuf
 import sys
 bus=Gio.bus_get_sync(Gio.BusType.SESSION,None)
 items=bus.call_sync('org.kde.StatusNotifierWatcher','/StatusNotifierWatcher','org.freedesktop.DBus.Properties','Get',GLib.Variant('(ss)',('org.kde.StatusNotifierWatcher','RegisteredStatusNotifierItems')),None,Gio.DBusCallFlags.NONE,3000,None).unpack()[0]
@@ -33,6 +36,7 @@ for item in items:
  service,path=item.split('@',1)
  props=bus.call_sync(service,path,'org.freedesktop.DBus.Properties','GetAll',GLib.Variant('(s)',('org.kde.StatusNotifierItem',)),None,Gio.DBusCallFlags.NONE,3000,None).unpack()[0]
  if ${JSON.stringify(temporary)} not in props.get('IconName',''): continue
+ GdkPixbuf.Pixbuf.new_from_file(props['IconName'])
  menu=Gio.DBusProxy.new_for_bus_sync(Gio.BusType.SESSION,Gio.DBusProxyFlags.NONE,None,service,props['Menu'],'com.canonical.dbusmenu',None)
  layout=menu.call_sync('GetLayout',GLib.Variant('(iias)',(0,-1,[])),Gio.DBusCallFlags.NONE,3000,None).unpack()[1]
  for child in layout[2]:
@@ -54,13 +58,13 @@ for line in subprocess.check_output(['xwininfo','-root','-tree'],text=True).spli
 if not states: raise RuntimeError('window not found')
 print('mapped' if any(states) else 'unmapped')
 `);
-  await writeFile(join(temporary, 'dist/index.html'), '<!doctype html><html><body><script src="/probe.js"></script></body></html>');
+  await writeFile(join(resources, 'dist/index.html'), '<!doctype html><html><body><script src="/probe.js"></script></body></html>');
   await build({
     stdin: {
       resolveDir: root,
       contents: `
 import { initDesktopLifecycle } from './src/services/desktopLifecycle';
-import { loadSettings, saveSettings } from './src/services/neutralinoBackend';
+import { loadSettings, saveSettings, configureTray } from './src/services/neutralinoBackend';
 import { buildAutostartEntry, autostartPath } from './src/services/linuxAutostart';
 const api = window.Neutralino;
 api.init();
@@ -71,11 +75,8 @@ const clickTray = async label => {
   assert(out.exitCode === 0, 'native tray click failed: ' + out.stdErr);
 };
 (async () => {
-  let menu;
   await initDesktopLifecycle(api, loadSettings, async () => {
-    menu = [{ id: 'show', text: '显示窗口' }, { id: 'hide', text: '隐藏到托盘' }, { id: 'quit', text: '退出' }];
-    await api.os.setTray({ icon: '/icons/tray.png', menuItems: menu });
-    return true;
+    return configureTray(0, 0, '额度');
   }, () => {}, ['--background']);
   assert(!(await api.window.isVisible()), 'background startup must stay hidden');
   await clickTray('显示窗口');
@@ -108,16 +109,17 @@ const clickTray = async label => {
   let missing = false;
   try { await api.filesystem.getStats(path); } catch(error) { missing = error.code === 'NE_FS_NOPATHE'; }
   assert(missing, 'disabling must remove the actual file');
-  await api.filesystem.writeFile(${JSON.stringify(join(temporary, 'result.json'))}, JSON.stringify({ passed: true, menu, hiddenAfterClose: true, restoredAfterMinimize: true, realTrayClicks: true, autostartEnabledAndRemoved: true }));
+  await api.filesystem.writeFile(${JSON.stringify(join(temporary, 'result.json'))}, JSON.stringify({ passed: true, bundledTrayIconDecoded: true, hiddenAfterClose: true, restoredAfterMinimize: true, realTrayClicks: true, autostartEnabledAndRemoved: true }));
   await api.events.dispatch('trayMenuItemClicked', { id: 'quit' });
 })().catch(async error => {
   await api.filesystem.writeFile(${JSON.stringify(join(temporary, 'result.json'))}, JSON.stringify({ passed: false, error: String(error), code: error.code }));
   await api.app.exit(1);
 });`,
     },
-    bundle: true, format: 'iife', outfile: join(temporary, 'dist/probe.js'),
+    bundle: true, format: 'iife', outfile: join(resources, 'dist/probe.js'),
   });
-  child = spawn(binary, ['--load-dir-res', `--path=${temporary}`, '--background', '--window-use-saved-state=false'], {
+  await createPackage(resources, join(temporary, 'resources.neu'));
+  child = spawn(binary, [`--path=${temporary}`, '--background', '--window-use-saved-state=false'], {
     env: { ...process.env, WEBKIT_DISABLE_COMPOSITING_MODE: '1', XDG_CONFIG_HOME: join(temporary, 'config') }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

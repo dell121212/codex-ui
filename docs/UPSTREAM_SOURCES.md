@@ -57,3 +57,7 @@
 - 测试与更新责任：本项目 `desktopLifecycle.test.ts` 检查真实 API 名、权限、旧设置迁移、启动覆盖、托盘恢复/关闭/退出、失败回退、XDG/Exec、保存回滚；未移植上游测试。维护者升级 Neutralino 时应同时复核 nativeAllowList、客户端方法名和 Linux 托盘事件，重跑桌面兼容验证。详细边界见 [DESKTOP_BACKGROUND_CONTRACT.md](DESKTOP_BACKGROUND_CONTRACT.md)。
 
 窗口恢复补充核验：6.5.0 `api/window/window.cpp` 的 show 只更新 GTK widget，isVisible 返回 GTK visible 标记；它们不保证 GNOME 实际窗口已经映射。窗口初始化 native hidden=true 的失效已由系统 X11 状态复现，修复采用已有 API 和 renderer 初始化隐藏，复用 `window.unminimize` 恢复最小化，不升级运行时、不引入外部激活工具。新增真实 AppIndicator/D-Bus 点击与 X11 映射回归位于 `tests/desktop_startup_regression.mjs`；维护责任与先前适配相同。
+
+2026-10-18 托盘路径补充：核对 [core 6.5.0 `api/os/os.cpp`](https://github.com/neutralinojs/neutralinojs/blob/v6.5.0/api/os/os.cpp) 的 `setTray`、[`resources.cpp`](https://github.com/neutralinojs/neutralinojs/blob/v6.5.0/resources.cpp) 的 `extractFile`，以及本机已安装 `@neutralinojs/neu` 11.7.2 的 `src/modules/bundler.js`（MIT，`Copyright (c) 2019 Neutralinojs`，声明位于包内 LICENSE）。继续复用现有依赖，无新增源码或素材移植。`neutralinoBackend.ts` 修正原生托盘资源路径为 `/dist/icons/tray.png`，对应现有 `cli.resourcesPath=/dist/` 归档层级。桌面测试使用打包器已有 `@electron/asar` 依赖生成同层级资源包，检查真实 IconName 的 PNG 解码及菜单恢复。升级宿主或调整资源目录时需重跑该测试；诊断与边界见 [DESKTOP_BACKGROUND_CONTRACT.md](DESKTOP_BACKGROUND_CONTRACT.md)。
+
+防回归适配继续复用 [Neutralino Resources API](https://neutralino.js.org/docs/api/resources/) 的 `getStats`（client 6.8.0 本地 `neutralino.d.ts`，已在 core 6.5.0 的真实打包桌面回归中验证），在配置加入对应最小权限，缺失资源交给既有生命周期恢复窗口。共享路径为 `src/desktop-resources.json`；构建门禁 `scripts/verify-desktop-package.mjs` 与六种损坏/完整包测试使用 neu 已锁定依赖 `@electron/asar` 的读取/打包接口，没有复制其源码或新增依赖。该工具仅用于开发、测试和打包，不进入桌面运行时。更新责任包括真实包资源、源图标一致性、权限和恢复回归。

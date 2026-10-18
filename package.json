@@ -11,11 +11,13 @@
     "preview": "vite preview",
     "neutralino": "neu",
     "engine:install": "bash scripts/build-codex-engine.sh",
-    "neutralino:build": "pnpm build && neu build && pnpm engine:install",
+    "neutralino:build": "pnpm build && neu build && pnpm engine:install && pnpm verify:package",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives",
     "test": "vitest run",
     "test:browser": "node tests/browser_ui_regression.mjs",
     "test:desktop": "node tests/desktop_startup_regression.mjs",
+    "test:package": "node --test tests/package_resources_regression.mjs",
+    "verify:package": "node scripts/verify-desktop-package.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

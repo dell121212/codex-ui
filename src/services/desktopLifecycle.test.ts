@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initDesktopLifecycle, shouldStartHidden } from './desktopLifecycle';
-import { loadSettings, saveSettings } from './neutralinoBackend';
+import { loadSettings, saveSettings, configureTray } from './neutralinoBackend';
 import { applyLinuxAutostart, autostartPath, buildAutostartEntry } from './linuxAutostart';
 import config from '../../neutralino.config.json';
 
@@ -13,13 +13,14 @@ function host() {
     app: { exit: vi.fn().mockResolvedValue(undefined) },
     events: { on: vi.fn((name, handler) => { handlers.set(name, handler); }) },
     window: { unminimize: vi.fn().mockResolvedValue(undefined), show: vi.fn().mockResolvedValue(undefined), hide: vi.fn().mockResolvedValue(undefined), focus: vi.fn().mockResolvedValue(undefined) },
-    os: { getEnv: vi.fn().mockResolvedValue(''), getPath: vi.fn().mockResolvedValue('/home/test'), execCommand: vi.fn().mockResolvedValue({ stdOut: executable, exitCode: 0 }) },
+    os: { setTray: vi.fn().mockResolvedValue(undefined), getEnv: vi.fn().mockResolvedValue(''), getPath: vi.fn().mockResolvedValue('/home/test'), execCommand: vi.fn().mockResolvedValue({ stdOut: executable, exitCode: 0 }) },
     filesystem: {
       getStats: vi.fn().mockRejectedValue(missing), readFile: vi.fn(),
       writeFile: vi.fn().mockResolvedValue(undefined), remove: vi.fn().mockResolvedValue(undefined),
       createDirectory: vi.fn().mockResolvedValue(undefined),
     },
     storage: { getData: vi.fn().mockResolvedValue(JSON.stringify(settings)), setData: vi.fn().mockResolvedValue(undefined) },
+    resources: { getStats: vi.fn().mockResolvedValue({ size: 1171, isFile: true, isDirectory: false }) },
   };
   return { api: api as unknown as NeutralinoApi, mock: api, handlers };
 }
@@ -70,6 +71,19 @@ describe('desktop background lifecycle', () => {
     await initDesktopLifecycle(api, async () => settings, async () => false, () => {}, ['--background']);
     expect(mock.window.show).toHaveBeenCalledOnce();
     expect(mock.window.hide).toHaveBeenCalledOnce();
+    handlers.get('windowClose')!({ detail: null });
+    await settle();
+    expect(mock.app.exit).toHaveBeenCalledOnce();
+  });
+  it.each(['missing', 'empty', 'directory'])('keeps a recovery window when the tray resource is %s', async (kind) => {
+    const { api, mock, handlers } = host();
+    vi.stubGlobal('window', { Neutralino: api });
+    if (kind === 'missing') mock.resources.getStats.mockRejectedValue({ code: 'NE_RS_NOPATHE' });
+    else mock.resources.getStats.mockResolvedValue({ size: kind === 'directory' ? 4096 : 0, isFile: kind !== 'directory', isDirectory: kind === 'directory' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await initDesktopLifecycle(api, async () => settings, () => configureTray(0, 0, '额度'), () => {}, ['--background']);
+    expect(mock.window.show).toHaveBeenCalledOnce();
+    expect(mock.os.setTray).not.toHaveBeenCalled();
     handlers.get('windowClose')!({ detail: null });
     await settle();
     expect(mock.app.exit).toHaveBeenCalledOnce();

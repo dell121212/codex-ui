@@ -38,6 +38,12 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
   const hasAvailable = available != null && available > 0;
   const lifetimeUsed = banked?.lifetime_used ?? 0;
   const visibleSlots = hasAvailable ? Math.min(available, MAX_DOTS) : 0;
+  const expiryTimes = (banked?.credits ?? [])
+    .filter((credit) => credit.status.toLowerCase() === 'available')
+    .map((credit) => credit.expires_at)
+    .filter((time): time is number => time != null && time > 0 && Number.isFinite(new Date(time * 1000).getTime()));
+  const expiresAt = expiryTimes.length > 0 ? new Date(Math.min(...expiryTimes) * 1000) : null;
+  const expiryLabel = available != null && available > 1 ? '最早过期' : '过期时间';
 
   const confirmReset = async () => {
     if (loading) return;
@@ -84,6 +90,16 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
           </div>
           {lastReset && (
             <div className="reset-last">上次 {lastReset}</div>
+          )}
+          {available !== 0 && (
+            <div className="reset-expiry">
+              {expiresAt ? (
+                <>{expiryLabel} <time dateTime={expiresAt.toISOString()} title={expiresAt.toString()}>{expiresAt.toLocaleString([], {
+                  year: 'numeric', month: '2-digit', day: '2-digit',
+                  hour: '2-digit', minute: '2-digit', hour12: false,
+                })}</time></>
+              ) : '过期时间未提供'}
+            </div>
           )}
         </div>
 

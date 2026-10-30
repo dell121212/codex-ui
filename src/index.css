@@ -1234,6 +1234,12 @@ body {
 .reset-panel--compact .reset-last {
   display: none;
 }
+.reset-expiry {
+  margin-top: 3px;
+  color: var(--t2);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
 .reset-panel--compact .reset-title {
   gap: 4px;
   font-size: 8.5px;

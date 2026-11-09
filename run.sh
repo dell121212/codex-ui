@@ -207,6 +207,10 @@ run_app() {
   if [[ "$BUILD_ONLY" != true ]]; then clear_old_app_processes; fi
   build_app
   if [[ "$BUILD_ONLY" == true ]]; then return; fi
+  # A moved checkout must not leave an installed menu entry pointing to its old path.
+  if ! node scripts/install-desktop-entry.mjs --if-present; then
+    warn "更新应用菜单失败；可运行 pnpm desktop:install 重试。"
+  fi
   log "启动应用..."
   if [[ " ${LAUNCH_ARGS[*]} " == *" --background "* ]]; then
     nohup "$APP_BIN" "${LAUNCH_ARGS[@]}" >"$ROOT_DIR/neutralino-dist/codex-ui/startup.log" 2>&1 < /dev/null &

@@ -1,15 +1,6 @@
 import { getHomePath } from './neutralinoPaths';
-
-function desktopValue(value: string): string {
-  if (/[\r\n\0]/.test(value)) throw new Error('自启动路径包含无效字符');
-  return value.replace(/\\/g, '\\\\');
-}
-
-/** Exec has argument quoting followed by the Desktop Entry string escaping. */
-export function desktopExecQuote(value: string): string {
-  const quoted = value.replace(/([\\"`$])/g, '\\$1').replace(/%/g, '%%');
-  return desktopValue(`"${quoted}"`);
-}
+import { desktopExecCommand } from './linuxDesktopEntry.mjs';
+export { desktopExecQuote } from './linuxDesktopEntry.mjs';
 
 export function buildAutostartEntry(executable: string): string {
   if (!executable.startsWith('/')) throw new Error('自启动需要绝对程序路径');
@@ -18,7 +9,7 @@ export function buildAutostartEntry(executable: string): string {
     'Type=Application',
     'Name=codex-ui',
     'Comment=Codex usage dashboard',
-    `Exec=${desktopExecQuote(executable)} --background`,
+    `Exec=${desktopExecCommand(executable)} --background`,
     'Terminal=false',
     'X-GNOME-Autostart-enabled=true',
     '',

@@ -17,6 +17,8 @@
     "test:browser": "node tests/browser_ui_regression.mjs",
     "test:desktop": "node tests/desktop_startup_regression.mjs",
     "test:package": "node --test tests/package_resources_regression.mjs",
+    "test:launcher": "node --test tests/desktop_launcher_regression.mjs",
+    "desktop:install": "node scripts/install-desktop-entry.mjs",
     "verify:package": "node scripts/verify-desktop-package.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -38,8 +38,9 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
   const hasAvailable = available != null && available > 0;
   const lifetimeUsed = banked?.lifetime_used ?? 0;
   const visibleSlots = hasAvailable ? Math.min(available, MAX_DOTS) : 0;
-  const expiryTimes = (banked?.credits ?? [])
-    .filter((credit) => credit.status.toLowerCase() === 'available')
+  const availableCredits = (banked?.credits ?? [])
+    .filter((credit) => credit.status.toLowerCase() === 'available');
+  const expiryTimes = availableCredits
     .map((credit) => credit.expires_at)
     .filter((time): time is number => time != null && time > 0 && Number.isFinite(new Date(time * 1000).getTime()));
   const expiresAt = expiryTimes.length > 0 ? new Date(Math.min(...expiryTimes) * 1000) : null;
@@ -50,7 +51,7 @@ export default function ResetPanel({ banked, embedded = false, compact = false }
     setShowConfirm(false);
     setLoading(true);
     setFeedback(null);
-    const outcome = await executeReset(banked?.credits[0]?.id);
+    const outcome = await executeReset(availableCredits[0]?.id);
     setLoading(false);
     const result = {
       reset: { ok: true, msg: '额度窗口已重置' },

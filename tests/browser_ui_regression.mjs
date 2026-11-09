@@ -395,6 +395,50 @@ try {
     throw new Error(`Drag regression failed: ${JSON.stringify(result)}`);
   }
 
+  // A credit list may contain redeemed entries before the available one.
+  // Stub the action so this regression cannot consume any real account credit.
+  await evaluate(send, `(async () => {
+    const { useStore } = await import('/src/store/usageStore.ts');
+    const initial = useStore.getState();
+    window.__resetProbe = { calls: [], initialData: initial.data, initialAction: initial.executeReset };
+    useStore.setState({
+      data: { ...initial.data, banked_resets: {
+        ...initial.data.banked_resets, available: 1,
+        credits: [
+          { id: 'already-used', status: 'redeemed', expires_at: null },
+          { id: 'usable-credit', status: 'AVAILABLE', expires_at: null },
+        ],
+      } },
+      executeReset: async id => { window.__resetProbe.calls.push(id ?? null); return 'reset'; },
+    });
+  })()`);
+  await waitForExpression(send, `document.querySelector('.reset-btn')?.getAttribute('aria-label')?.includes('剩余 1 次')`);
+  await evaluate(send, `document.querySelector('.reset-btn')?.click()`);
+  await waitForExpression(send, 'Boolean(document.querySelector(".btn-confirm-danger"))');
+  await evaluate(send, `document.querySelector('.btn-confirm-danger')?.click()`);
+  await waitForExpression(send, 'window.__resetProbe.calls.length === 1');
+  const selectedCredit = await evaluate(send, 'window.__resetProbe.calls[0]');
+  if (selectedCredit !== 'usable-credit') {
+    throw new Error('Reset selected an unavailable credit: ' + selectedCredit);
+  }
+  await waitForExpression(send, '!document.querySelector(".btn-confirm-danger")');
+  await evaluate(send, `(async () => {
+    const { useStore } = await import('/src/store/usageStore.ts');
+    const data = useStore.getState().data;
+    useStore.setState({ data: { ...data, banked_resets: { ...data.banked_resets, credits: [] } } });
+  })()`);
+  await evaluate(send, `document.querySelector('.reset-btn')?.click()`);
+  await waitForExpression(send, 'Boolean(document.querySelector(".btn-confirm-danger"))');
+  await evaluate(send, `document.querySelector('.btn-confirm-danger')?.click()`);
+  await waitForExpression(send, 'window.__resetProbe.calls.length === 2');
+  if (await evaluate(send, 'window.__resetProbe.calls[1]') !== null) {
+    throw new Error('Reset must preserve server selection when credit details are absent');
+  }
+  await evaluate(send, `(async () => {
+    const { useStore } = await import('/src/store/usageStore.ts');
+    useStore.setState({ data: window.__resetProbe.initialData, executeReset: window.__resetProbe.initialAction });
+  })()`);
+
   await evaluate(send, `(() => {
     const button = [...document.querySelectorAll('.app-toolbar-nav-item')]
       .find((node) => node.textContent.includes('用量分析'));
@@ -652,7 +696,7 @@ async function evaluate(send, expression) {
     expression,
     returnByValue: true,
     awaitPromise: true,
-  });
+  }).catch(error => { throw new Error(`Browser evaluation failed: ${expression.slice(0, 240)}`, { cause: error }); });
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.text);
   }

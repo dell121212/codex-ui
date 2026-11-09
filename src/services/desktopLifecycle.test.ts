@@ -132,7 +132,9 @@ describe('Linux autostart host adaptation', () => {
     expect(entry).toContain('\\\\$');
     expect(entry).toContain('\\\\`');
     expect(entry).toContain('\\\\\\\\b');
+    expect(entry).toContain('Exec=/usr/bin/env ');
     expect(() => buildAutostartEntry('/tmp/bad\nExec=evil')).toThrow();
+    expect(() => buildAutostartEntry('/tmp/bad=path/neutralino')).toThrow('等号');
   });
   it('enables a built executable with background argument and can undo the new file', async () => {
     const { api, mock } = host();
